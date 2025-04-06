@@ -1,54 +1,136 @@
 use rand_core::OsRng;
+use anyhow::Result;
 use russh::keys;
 use russh::server::{self, Auth, Server as _};
+use serde::Deserialize;
+use crate::logger::EventLogger;
+use crate::events::{Event, SshAuthMethod};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Clone)]
-pub struct SshServer;
-
-pub struct SshHandler {
-    pub peer_addr: Option<SocketAddr>,
+#[derive(Deserialize)]
+pub struct SshConfig {
+    listen_addr: String,
+    listen_port: u16,
+    inactivity_timeout: Duration,
+    auth_rejection_time: Duration,
+    max_auth_attempts: usize,
+    host_key_file: String,
+    server_id: String,
 }
 
-impl server::Server for SshServer {
-    type Handler = SshHandler;
-
-    fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
-        SshHandler { peer_addr }
+impl Default for SshConfig {
+    fn default() -> Self {
+        SshConfig {
+            listen_addr: "0.0.0.0".to_owned(),
+            listen_port: 2222,
+            auth_rejection_time: Duration::from_secs(1),
+            inactivity_timeout: Duration::from_secs(3600),
+            max_auth_attempts: 5,
+            host_key_file: "/var/db/narcd/ssh_hostkey".to_owned(),
+            server_id: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5".to_owned(),
+        }
     }
 }
 
-impl server::Handler for SshHandler {
-    type Error = russh::Error;
+#[derive(Clone)]
+pub struct SshServer<L: EventLogger> {
+    pub logger: L,
+}
+
+pub struct SshHandler<L: EventLogger> {
+    pub peer_addr: Option<SocketAddr>,
+    pub logger: L,
+}
+
+impl<L: EventLogger + 'static> server::Server for SshServer<L> {
+    type Handler = SshHandler<L>;
+
+    fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
+        SshHandler { peer_addr, logger: self.logger.clone() }
+    }
+}
+
+impl<L: EventLogger> server::Handler for SshHandler<L> {
+    type Error = anyhow::Error;
 
     async fn auth_password(
         &mut self,
         user: &str,
-        _password: &str,
+        password: &str,
     ) -> Result<server::Auth, Self::Error> {
-        log::info!("auth attempt by {}", user);
+        let event = Event::SshLogin {
+            src_ip: self.peer_addr.map(|addr| addr.ip()),
+            src_port: self.peer_addr.map(|addr| addr.port()),
+            username: user.to_string(),
+            auth: SshAuthMethod::Password { password: password.to_string() },
+        };
+        self.logger.log_event(event).await?;
+        Ok(Auth::reject())
+    }
+
+    async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
+        let event = Event::SshLogin {
+            src_ip: self.peer_addr.map(|addr| addr.ip()),
+            src_port: self.peer_addr.map(|addr| addr.port()),
+            username: user.to_string(),
+            auth: SshAuthMethod::None,
+        };
+        self.logger.log_event(event).await?;
+        Ok(Auth::reject())
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        public_key: &keys::ssh_key::PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        let fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
+        let event = Event::SshLogin {
+            src_ip: self.peer_addr.map(|addr| addr.ip()),
+            src_port: self.peer_addr.map(|addr| addr.port()),
+            username: user.to_string(),
+            auth: SshAuthMethod::PublicKey { 
+                fingerprint,
+                comment: public_key.comment().to_string(),
+                algorithm: public_key.algorithm().to_string(),
+            },
+        };
+        self.logger.log_event(event).await?;
         Ok(Auth::reject())
     }
 }
 
-pub async fn start_server() -> Result<(), std::io::Error> {
-    let key = keys::PrivateKey::random(&mut OsRng, keys::Algorithm::Rsa { hash: None })
-        .expect("Could not generate private key");
+async fn create_host_key(filename: &str) -> Result<keys::PrivateKey> {
+    log::info!("generating new ssh hostkey");
+    let key = keys::PrivateKey::random(&mut OsRng, keys::Algorithm::Rsa { hash: None })?;
+    tokio::fs::write(filename, key.to_openssh(keys::ssh_key::LineEnding::LF)?).await?;
+    Ok(key)
+}
 
+async fn get_or_create_host_key(config: &SshConfig) -> Result<keys::PrivateKey> {
+    match tokio::fs::read(&config.host_key_file).await {
+        Ok(bytes) => Ok(keys::PrivateKey::from_openssh(bytes)?),
+        Err(_) => Ok(create_host_key(&config.host_key_file).await?),
+    }
+}
+
+pub async fn start_server(config: &SshConfig, logger: impl EventLogger + 'static) -> Result<()> {
+    let key = get_or_create_host_key(&config).await?;
+    let addr = (config.listen_addr.clone(), config.listen_port);
     let config = server::Config {
-        inactivity_timeout: Some(Duration::from_secs(3600)),
-        auth_rejection_time: Duration::from_secs(1),
-        auth_rejection_time_initial: Some(Duration::from_secs(0)),
-        max_auth_attempts: 5,
+        inactivity_timeout: Some(config.inactivity_timeout),
+        auth_rejection_time: config.auth_rejection_time,
+        max_auth_attempts: config.max_auth_attempts,
+        server_id: russh::SshId::Standard(config.server_id.clone()),
         keys: vec![key],
         ..Default::default()
     };
 
     let config = Arc::new(config);
-    let mut server = SshServer;
+    let mut server = SshServer { logger };
 
-    log::info!("server running on 0.0.0.0:2222");
-    server.run_on_address(config, ("0.0.0.0", 2222)).await
+    log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
+    Ok(server.run_on_address(config, addr).await?)
 }
