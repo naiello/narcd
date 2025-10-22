@@ -6,9 +6,9 @@ phases:
     commands:
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - source $HOME/.cargo/env
-    build:
-      commands:
-        - cargo build --release
+  build:
+    commands:
+      - cargo build --release
 artifacts:
   files:
     - target/release/narcd
