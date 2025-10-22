@@ -11,13 +11,13 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct SshConfig {
-    listen_addr: String,
-    listen_port: u16,
-    inactivity_timeout: Duration,
-    auth_rejection_time: Duration,
-    max_auth_attempts: usize,
-    host_key_file: String,
-    server_id: String,
+    pub listen_addr: String,
+    pub listen_port: u16,
+    pub inactivity_timeout: Duration,
+    pub auth_rejection_time: Duration,
+    pub max_auth_attempts: usize,
+    pub host_key_file: String,
+    pub server_id: String,
 }
 
 impl Default for SshConfig {
