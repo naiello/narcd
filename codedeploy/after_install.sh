@@ -5,3 +5,4 @@ for d in /var/log/narcd /var/db/narcd; do
     mkdir -p "$d"
     chown -R narcd:narcd "$d"
 done
+setcap 'cap_net_bind_service=+ep' /opt/narcd/bin/narcd
