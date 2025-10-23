@@ -13,6 +13,7 @@ artifacts:
   files:
     - target/release/narcd
     - codedeploy/*
+    - service/*
     - appspec.yml
 cache:
   paths:
