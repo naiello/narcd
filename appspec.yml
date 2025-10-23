@@ -1,5 +1,9 @@
 version: 0.0
 os: linux
 files:
-  - source: narcd
+  - source: target/release/narcd
     destination: /opt/narcd/bin
+hooks:
+  AfterInstall:
+    - location: codedeploy/after_install.sh
+      timeout: 30
