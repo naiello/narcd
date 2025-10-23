@@ -3,7 +3,12 @@ os: linux
 files:
   - source: target/release/narcd
     destination: /opt/narcd/bin
+  - source: service/narcd.service
+    destination: /etc/systemd/system
 hooks:
   AfterInstall:
     - location: codedeploy/after_install.sh
-      timeout: 30
+  ApplicationStart:
+    - location: codedeploy/start.sh
+  ApplicationStop:
+    - location: codedeploy/stop.sh
