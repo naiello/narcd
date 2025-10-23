@@ -1,10 +1,10 @@
 use crate::events::Event;
-use std::sync::Arc;
+use anyhow::Result;
 use serde::Deserialize;
-use tokio::task::JoinHandle;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use anyhow::Result;
+use tokio::task::JoinHandle;
 
 const LOG_CHAN_SIZE: usize = 2048;
 
@@ -21,7 +21,7 @@ impl Default for LoggingConfig {
     }
 }
 
-pub trait EventLogger : Send + Clone {
+pub trait EventLogger: Send + Clone {
     fn log_event(&self, event: Event) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
@@ -47,7 +47,7 @@ impl FileLogger {
                         Ok(event) => {
                             log_file.write(&event).await.ok();
                             log_file.write(b"\n").await.ok();
-                        },
+                        }
                         Err(e) => log::error!("failed to serialize event {:?}: {:?}", event, e),
                     }
                 } else {
@@ -66,4 +66,3 @@ impl EventLogger for FileLogger {
         Ok(self.tx.send(event).await?)
     }
 }
-

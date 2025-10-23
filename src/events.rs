@@ -1,12 +1,18 @@
-use std::net::IpAddr;
 use serde::Serialize;
+use std::net::IpAddr;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 #[serde(tag = "method")]
 pub enum SshAuthMethod {
     None,
-    Password { password: String },
-    PublicKey { fingerprint: String, algorithm: String, comment: String },
+    Password {
+        password: String,
+    },
+    PublicKey {
+        fingerprint: String,
+        algorithm: String,
+        comment: String,
+    },
 }
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
@@ -19,4 +25,3 @@ pub enum Event {
         src_port: Option<u16>,
     },
 }
-

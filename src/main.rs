@@ -1,7 +1,7 @@
-use narcd::listeners::ssh::start_server;
 use anyhow::Result;
-use narcd::logger::FileLogger;
 use narcd::config::Config;
+use narcd::listeners::ssh::start_server;
+use narcd::logger::FileLogger;
 
 #[tokio::main]
 async fn main() -> Result<()> {

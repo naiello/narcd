@@ -1,10 +1,10 @@
-use rand_core::OsRng;
+use crate::events::{Event, SshAuthMethod};
+use crate::logger::EventLogger;
 use anyhow::Result;
+use rand_core::OsRng;
 use russh::keys;
 use russh::server::{self, Auth, Server as _};
 use serde::Deserialize;
-use crate::logger::EventLogger;
-use crate::events::{Event, SshAuthMethod};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +48,10 @@ impl<L: EventLogger + 'static> server::Server for SshServer<L> {
     type Handler = SshHandler<L>;
 
     fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
-        SshHandler { peer_addr, logger: self.logger.clone() }
+        SshHandler {
+            peer_addr,
+            logger: self.logger.clone(),
+        }
     }
 }
 
@@ -64,7 +67,9 @@ impl<L: EventLogger> server::Handler for SshHandler<L> {
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
-            auth: SshAuthMethod::Password { password: password.to_string() },
+            auth: SshAuthMethod::Password {
+                password: password.to_string(),
+            },
         };
         self.logger.log_event(event).await?;
         Ok(Auth::reject())
@@ -91,7 +96,7 @@ impl<L: EventLogger> server::Handler for SshHandler<L> {
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
-            auth: SshAuthMethod::PublicKey { 
+            auth: SshAuthMethod::PublicKey {
                 fingerprint,
                 comment: public_key.comment().to_string(),
                 algorithm: public_key.algorithm().to_string(),
