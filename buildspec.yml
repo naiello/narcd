@@ -12,6 +12,7 @@ phases:
 artifacts:
   files:
     - target/release/narcd
+    - appspec.yml
   discard-paths: "yes"
 cache:
   paths:
