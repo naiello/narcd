@@ -12,13 +12,9 @@ RestartSec=60s
 StandardOutput=journal
 StandardError=journal
 
-NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-ProtectKernelModules=true
 ProtectControlGroups=true
-ProtectKernelTunables=true
-RestrictSUIDSGID=true
 PrivateTmp=true
 
 [Install]
