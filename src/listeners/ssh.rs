@@ -1,6 +1,7 @@
 use crate::events::{SshAuthMethod, SshLogin};
 use crate::logger::EventLogger;
 use anyhow::Result;
+use chrono::Utc;
 use rand_core::OsRng;
 use russh::keys;
 use russh::server::{self, Auth, Server as _};
@@ -64,6 +65,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
         password: &str,
     ) -> Result<server::Auth, Self::Error> {
         let event = SshLogin {
+            ts: Utc::now(),
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
@@ -77,6 +79,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
 
     async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
         let event = SshLogin {
+            ts: Utc::now(),
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
@@ -93,6 +96,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
     ) -> Result<Auth, Self::Error> {
         let fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
         let event = SshLogin {
+            ts: Utc::now(),
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),

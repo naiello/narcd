@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::net::IpAddr;
 
@@ -17,6 +18,7 @@ pub enum SshAuthMethod {
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 pub struct SshLogin {
+    pub ts: DateTime<Utc>,
     pub username: String,
     pub auth: SshAuthMethod,
     pub src_ip: Option<IpAddr>,
