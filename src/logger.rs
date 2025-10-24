@@ -1,6 +1,6 @@
-use crate::events::Event;
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -10,35 +10,44 @@ const LOG_CHAN_SIZE: usize = 2048;
 
 #[derive(Deserialize)]
 pub struct LoggingConfig {
-    pub filename: String,
+    pub dir: PathBuf,
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
         LoggingConfig {
-            filename: "/var/log/narcd/events.log".to_string(),
+            dir: "/var/log/narcd".into(),
         }
     }
 }
 
-pub trait EventLogger: Send + Clone {
-    fn log_event(&self, event: Event) -> impl std::future::Future<Output = Result<()>> + Send;
+pub trait EventLogger<E: Serialize>: Send + Clone {
+    fn log_event(&self, event: E) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
-#[derive(Clone)]
-pub struct FileLogger {
-    tx: mpsc::Sender<Event>,
+pub struct FileLogger<E: Serialize> {
+    tx: mpsc::Sender<E>,
     _writer: Arc<JoinHandle<()>>,
 }
 
-impl FileLogger {
-    pub async fn new(filename: &str) -> Result<Self> {
+impl<E: Serialize> Clone for FileLogger<E> {
+    fn clone(&self) -> Self {
+        FileLogger {
+            tx: self.tx.clone(),
+            _writer: self._writer.clone(),
+        }
+    }
+}
+
+impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
+    pub async fn new(log_dir: impl AsRef<Path>) -> Result<Self> {
+        let filename = log_dir.as_ref().join("ssh.log");
         let mut log_file = tokio::fs::OpenOptions::new()
             .append(true)
             .create(true)
             .open(filename)
             .await?;
-        let (tx, mut rx) = mpsc::channel::<Event>(LOG_CHAN_SIZE);
+        let (tx, mut rx) = mpsc::channel::<E>(LOG_CHAN_SIZE);
 
         let writer = tokio::spawn(async move {
             loop {
@@ -48,7 +57,7 @@ impl FileLogger {
                             log_file.write(&event).await.ok();
                             log_file.write(b"\n").await.ok();
                         }
-                        Err(e) => log::error!("failed to serialize event {:?}: {:?}", event, e),
+                        Err(e) => log::error!("failed to serialize event: {:?}", e),
                     }
                 } else {
                     log::error!("bad recv");
@@ -61,8 +70,8 @@ impl FileLogger {
     }
 }
 
-impl EventLogger for FileLogger {
-    async fn log_event(&self, event: Event) -> Result<()> {
+impl<E: Serialize + Send + Sync + 'static> EventLogger<E> for FileLogger<E> {
+    async fn log_event(&self, event: E) -> Result<()> {
         Ok(self.tx.send(event).await?)
     }
 }

@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::net::IpAddr;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
-#[serde(tag = "method")]
+#[serde(tag = "method", rename_all = "snake_case")]
 pub enum SshAuthMethod {
     None,
     Password {
@@ -16,12 +16,9 @@ pub enum SshAuthMethod {
 }
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
-#[serde(tag = "type")]
-pub enum Event {
-    SshLogin {
-        username: String,
-        auth: SshAuthMethod,
-        src_ip: Option<IpAddr>,
-        src_port: Option<u16>,
-    },
+pub struct SshLogin {
+    pub username: String,
+    pub auth: SshAuthMethod,
+    pub src_ip: Option<IpAddr>,
+    pub src_port: Option<u16>,
 }

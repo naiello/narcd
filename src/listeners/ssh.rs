@@ -1,4 +1,4 @@
-use crate::events::{Event, SshAuthMethod};
+use crate::events::{SshAuthMethod, SshLogin};
 use crate::logger::EventLogger;
 use anyhow::Result;
 use rand_core::OsRng;
@@ -35,16 +35,16 @@ impl Default for SshConfig {
 }
 
 #[derive(Clone)]
-pub struct SshServer<L: EventLogger> {
+pub struct SshServer<L: EventLogger<SshLogin>> {
     pub logger: L,
 }
 
-pub struct SshHandler<L: EventLogger> {
+pub struct SshHandler<L: EventLogger<SshLogin>> {
     pub peer_addr: Option<SocketAddr>,
     pub logger: L,
 }
 
-impl<L: EventLogger + 'static> server::Server for SshServer<L> {
+impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
     type Handler = SshHandler<L>;
 
     fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
@@ -55,7 +55,7 @@ impl<L: EventLogger + 'static> server::Server for SshServer<L> {
     }
 }
 
-impl<L: EventLogger> server::Handler for SshHandler<L> {
+impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
     type Error = anyhow::Error;
 
     async fn auth_password(
@@ -63,7 +63,7 @@ impl<L: EventLogger> server::Handler for SshHandler<L> {
         user: &str,
         password: &str,
     ) -> Result<server::Auth, Self::Error> {
-        let event = Event::SshLogin {
+        let event = SshLogin {
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
@@ -76,7 +76,7 @@ impl<L: EventLogger> server::Handler for SshHandler<L> {
     }
 
     async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
-        let event = Event::SshLogin {
+        let event = SshLogin {
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
@@ -92,7 +92,7 @@ impl<L: EventLogger> server::Handler for SshHandler<L> {
         public_key: &keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
         let fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
-        let event = Event::SshLogin {
+        let event = SshLogin {
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
@@ -121,7 +121,10 @@ async fn get_or_create_host_key(config: &SshConfig) -> Result<keys::PrivateKey> 
     }
 }
 
-pub async fn start_server(config: &SshConfig, logger: impl EventLogger + 'static) -> Result<()> {
+pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
+    config: &SshConfig,
+    logger: L,
+) -> Result<()> {
     let key = get_or_create_host_key(&config).await?;
     let addr = (config.listen_addr.clone(), config.listen_port);
     let config = server::Config {

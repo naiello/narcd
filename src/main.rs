@@ -7,7 +7,7 @@ use narcd::logger::FileLogger;
 async fn main() -> Result<()> {
     pretty_env_logger::init_timed();
     let config: Config = Default::default();
-    let logger = FileLogger::new(&config.log.filename).await?;
+    let logger = FileLogger::new(&config.log.dir).await?;
     start_server(&config.listeners.ssh, logger).await?;
     Ok(())
 }
