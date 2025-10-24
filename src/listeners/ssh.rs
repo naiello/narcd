@@ -25,7 +25,7 @@ impl Default for SshConfig {
     fn default() -> Self {
         SshConfig {
             listen_addr: "0.0.0.0".to_owned(),
-            listen_port: 22,
+            listen_port: 2222,
             auth_rejection_time: Duration::from_secs(1),
             inactivity_timeout: Duration::from_secs(3600),
             max_auth_attempts: 5,
