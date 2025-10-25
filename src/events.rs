@@ -27,5 +27,5 @@ pub struct SshLogin {
 }
 
 fn serialize_ts<S: Serializer>(v: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {
-    s.collect_str(&v.format("%Y-%m-%dT%H:%M:%S%.3f"))
+    s.collect_str(&v.format("%Y-%m-%dT%H:%M:%S%.3fZ"))
 }
