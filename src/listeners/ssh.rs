@@ -77,18 +77,6 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
         Ok(Auth::reject())
     }
 
-    async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
-        let event = SshLogin {
-            ts: Utc::now(),
-            src_ip: self.peer_addr.map(|addr| addr.ip()),
-            src_port: self.peer_addr.map(|addr| addr.port()),
-            username: user.to_string(),
-            auth: SshAuthMethod::None,
-        };
-        self.logger.log_event(event).await?;
-        Ok(Auth::reject())
-    }
-
     async fn auth_publickey(
         &mut self,
         user: &str,
