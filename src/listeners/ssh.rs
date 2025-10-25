@@ -1,5 +1,6 @@
 use crate::events::{SshAuthMethod, SshLogin};
 use crate::logger::EventLogger;
+use crate::metadata::Metadata;
 use anyhow::Result;
 use chrono::Utc;
 use rand_core::OsRng;
@@ -38,11 +39,13 @@ impl Default for SshConfig {
 #[derive(Clone)]
 pub struct SshServer<L: EventLogger<SshLogin>> {
     pub logger: L,
+    pub metadata: Metadata,
 }
 
 pub struct SshHandler<L: EventLogger<SshLogin>> {
     pub peer_addr: Option<SocketAddr>,
     pub logger: L,
+    pub metadata: Metadata,
 }
 
 impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
@@ -52,6 +55,7 @@ impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
         SshHandler {
             peer_addr,
             logger: self.logger.clone(),
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -72,6 +76,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
             auth: SshAuthMethod::Password {
                 password: password.to_string(),
             },
+            metadata: self.metadata.clone(),
         };
         self.logger.log_event(event).await?;
         Ok(Auth::reject())
@@ -93,6 +98,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
                 comment: public_key.comment().to_string(),
                 algorithm: public_key.algorithm().to_string(),
             },
+            metadata: self.metadata.clone(),
         };
         self.logger.log_event(event).await?;
         Ok(Auth::reject())
@@ -115,6 +121,7 @@ async fn get_or_create_host_key(config: &SshConfig) -> Result<keys::PrivateKey> 
 
 pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     config: &SshConfig,
+    metadata: &Metadata,
     logger: L,
 ) -> Result<()> {
     let key = get_or_create_host_key(&config).await?;
@@ -129,7 +136,10 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     };
 
     let config = Arc::new(config);
-    let mut server = SshServer { logger };
+    let mut server = SshServer {
+        logger,
+        metadata: metadata.to_owned(),
+    };
 
     log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
     Ok(server.run_on_address(config, addr).await?)

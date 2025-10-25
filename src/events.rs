@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer};
 use std::net::IpAddr;
 
+use crate::metadata::Metadata;
+
 #[derive(PartialEq, Eq, Serialize, Debug)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum SshAuthMethod {
@@ -24,6 +26,7 @@ pub struct SshLogin {
     pub auth: SshAuthMethod,
     pub src_ip: Option<IpAddr>,
     pub src_port: Option<u16>,
+    pub metadata: Metadata,
 }
 
 fn serialize_ts<S: Serializer>(v: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {
