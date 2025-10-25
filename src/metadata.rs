@@ -27,7 +27,7 @@ pub async fn resolve_metadata(imds: &imds::Client) -> Result<Metadata> {
 pub async fn resolve_metadata_from_aws(imds: &imds::Client) -> Result<Metadata> {
     let instance_id = imds.get("/latest/meta-data/instance-id").await?.into();
     let ip = imds
-        .get("/latest/meta-data/public-ip")
+        .get("/latest/meta-data/public-ipv4")
         .await?
         .as_ref()
         .parse()?;
