@@ -12,9 +12,9 @@ pub enum SshAuthMethod {
         password: String,
     },
     PublicKey {
-        fingerprint: String,
-        algorithm: String,
-        comment: String,
+        key_fingerprint: String,
+        key_algorithm: String,
+        key_comment: String,
     },
 }
 

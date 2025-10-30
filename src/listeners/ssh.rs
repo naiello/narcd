@@ -87,16 +87,16 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
         user: &str,
         public_key: &keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
-        let fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
+        let key_fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
         let event = SshLogin {
             ts: Utc::now(),
             src_ip: self.peer_addr.map(|addr| addr.ip()),
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
             auth: SshAuthMethod::PublicKey {
-                fingerprint,
-                comment: public_key.comment().to_string(),
-                algorithm: public_key.algorithm().to_string(),
+                key_fingerprint,
+                key_comment: public_key.comment().to_string(),
+                key_algorithm: public_key.algorithm().to_string(),
             },
             metadata: self.metadata.clone(),
         };
