@@ -9,8 +9,8 @@ phases:
       - rustup install stable
       - rustup toolchain install nightly --component rust-src
       - cargo install bpf-linker
-      - apt-get update -y
-      - apt-get install -y bpftool llvm-20-dev libclang-20-dev libpolly-20-dev
+      - yum update -y
+      - yum install -y llvm
   build:
     commands:
       - cargo build --release
