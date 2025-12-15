@@ -29,14 +29,16 @@ pub async fn start_ebpf() -> Result<()> {
 
     let program: &mut Xdp = ebpf
         .program_mut("narcd")
-        .context("could not locate narcd eBPF program")?
+        .context("Could not locate narcd eBPF program")?
         .try_into()
         .context("narcd eBPF program is not XDP")?;
 
     program.load()?;
+
+    log::info!("Attempting to attach eBPF program to interface {}", iface);
     program
         .attach(&iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags")?;
+        .context("Failed to attach the XDP program with default flags")?;
 
     let mut events: PerfEventArray<_> = ebpf
         .take_map("EVENTS")
