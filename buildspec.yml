@@ -6,6 +6,11 @@ phases:
     commands:
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - source $HOME/.cargo/env
+      - rustup install stable
+      - rustup toolchain install nightly --component rust-src
+      - cargo install bpf-linker
+      - apt-get update -y
+      - apt-get install -y bpftool llvm-20-dev libclang-20-dev libpolly-20-dev
   build:
     commands:
       - cargo build --release
