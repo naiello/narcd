@@ -19,7 +19,9 @@ async fn main() -> Result<()> {
     let metadata = resolve_metadata(&imds).await?;
     let config: Config = Default::default();
     let logger = FileLogger::new(&config.log.dir).await?;
-    tokio::spawn(start_ebpf());
+    tokio::spawn(async move {
+        start_ebpf().await.inspect_err(|err| log::error!("Failed to start eBPF: {}", err))
+    });
     start_server(&config.listeners.ssh, &metadata, logger).await?;
 
     let ctrl_c = signal::ctrl_c();
