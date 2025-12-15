@@ -1,4 +1,5 @@
 pub mod config;
+pub mod ebpf;
 pub mod events;
 pub mod listeners;
 pub mod logger;

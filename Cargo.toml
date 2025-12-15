@@ -1,11 +1,29 @@
-[package]
-name = "narcd"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+    "narcd",
+    "narcd-common",
+    "narcd-ebpf",
+]
+default-members = ["narcd", "narcd-common"]
 
-[dependencies]
+[workspace.package]
+license = "MIT OR Apache-2.0"
+edition = "2024"
+
+[workspace.dependencies]
+aya = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+cargo_metadata = { version = "0.23.0", default-features = false }
+env_logger = { version = "0.11.5", default-features = false }
+libc = { version = "0.2.159", default-features = false }
+which = { version = "6.0.0", default-features = false }
 anyhow = "1.0.97"
 aws-config = "1.8.8"
+bytes = "1.11.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 config = "0.15.11"
 local-ip-address = "0.6.5"
@@ -17,3 +35,8 @@ russh = "0.51.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.44.1", features = ["fs", "macros"] }
+default-net = "0.22.0"
+
+[profile.release.package.narcd-ebpf]
+debug = 2
+codegen-units = 1
