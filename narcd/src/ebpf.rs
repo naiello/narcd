@@ -92,14 +92,14 @@ async fn run_flow_collector<L: EventLogger<Flow>>(mut rx: UnboundedReceiver<Flow
             .ok();
     }
 
-    log::warn!("Scan tracker is shutting down");
+    log::warn!("Flow collector is shutting down");
 }
 
 async fn read_event_buffer(
     mut fd: AsyncFd<PerfEventArrayBuffer<MapData>>,
     tracker: FlowCollector,
 ) -> ! {
-    let buf_sz = core::mem::size_of::<Flow>();
+    let buf_sz = size_of::<Flow>();
     let mut buffers = std::iter::repeat_with(|| BytesMut::with_capacity(buf_sz))
         .take(EVENTS_READ_BUF_SIZE)
         .collect::<Vec<_>>();
@@ -109,9 +109,8 @@ async fn read_event_buffer(
         loop {
             let Events { read, .. } = guard.get_inner_mut().read_events(&mut buffers).unwrap();
 
-            for buf in buffers.iter_mut().take(read) {
-                let ptr = buf.as_ptr() as *const Flow;
-                let flow = unsafe { ptr.read_unaligned() };
+            for buf in buffers.iter().take(read) {
+                let flow = unsafe { (buf.as_ptr() as *const Flow).read_unaligned() };
                 tracker
                     .collect_flow(flow)
                     .inspect_err(|err| log::error!("Failed to collect flow {:?}", err))
