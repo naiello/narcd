@@ -41,8 +41,8 @@ fn process_packet(ctx: XdpContext) -> Result<u32, ()> {
     }
     let tcp_hdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
 
-    let src_ip = u32::from_be_bytes(unsafe { (*ipv4_hdr).src_addr });
-    let dst_ip = u32::from_be_bytes(unsafe { (*ipv4_hdr).dst_addr });
+    let src_ip = unsafe { (*ipv4_hdr).src_addr() };
+    let dst_ip = unsafe { (*ipv4_hdr).dst_addr() };
     let src_port = u16::from_be_bytes(unsafe { (*tcp_hdr).source });
     let dst_port = u16::from_be_bytes(unsafe { (*tcp_hdr).dest });
     let is_syn = unsafe { (*tcp_hdr).syn() } > 0;

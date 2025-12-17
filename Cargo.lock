@@ -2067,6 +2067,8 @@ name = "narcd-common"
 version = "0.1.0"
 dependencies = [
  "aya",
+ "network-types",
+ "serde",
 ]
 
 [[package]]

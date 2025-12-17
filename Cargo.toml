@@ -36,6 +36,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.44.1", features = ["fs", "macros"] }
 default-net = "0.22.0"
+network-types = "0.1.0"
 
 [profile.release.package.narcd-ebpf]
 debug = 2

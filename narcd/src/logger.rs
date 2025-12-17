@@ -40,8 +40,8 @@ impl<E: Serialize> Clone for FileLogger<E> {
 }
 
 impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
-    pub async fn new(log_dir: impl AsRef<Path>) -> Result<Self> {
-        let filename = log_dir.as_ref().join("ssh.log");
+    pub async fn new(log_dir: impl AsRef<Path>, filename: &str) -> Result<Self> {
+        let filename = log_dir.as_ref().join(filename);
         let mut log_file = tokio::fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -54,8 +54,8 @@ impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
                 if let Some(event) = rx.recv().await {
                     match serde_json::to_vec(&event) {
                         Ok(event) => {
-                            log_file.write(&event).await.ok();
-                            log_file.write(b"\n").await.ok();
+                            log_file.write_all(&event).await.ok();
+                            log_file.write_all(b"\n").await.ok();
                         }
                         Err(e) => log::error!("failed to serialize event: {:?}", e),
                     }
