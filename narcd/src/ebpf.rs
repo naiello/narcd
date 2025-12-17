@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow};
 use aya::{
@@ -18,11 +18,14 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
 };
 
-use crate::logger::EventLogger;
+use crate::{logger::EventLogger, metadata::Metadata};
 
 const EVENTS_READ_BUF_SIZE: usize = 10;
 
-pub async fn start_ebpf<L: EventLogger<Flow> + 'static>(logger: L) -> Result<()> {
+pub async fn start_ebpf<L: EventLogger<Flow> + 'static>(
+    metadata: Arc<Metadata>,
+    logger: L,
+) -> Result<()> {
     let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
         "/narcd"
@@ -51,7 +54,7 @@ pub async fn start_ebpf<L: EventLogger<Flow> + 'static>(logger: L) -> Result<()>
         .try_into()
         .context("EVENTS map is not PerfEventArray")?;
 
-    let collector = FlowCollector::new(logger);
+    let collector = FlowCollector::new(logger, metadata);
     for cpu_id in online_cpus().map_err(|(_, error)| error)? {
         let buf = events.open(cpu_id, None)?;
         let fd = AsyncFd::with_interest(buf, Interest::READABLE)?;
@@ -71,9 +74,9 @@ struct FlowCollector {
 }
 
 impl FlowCollector {
-    pub fn new<L: EventLogger<Flow> + 'static>(logger: L) -> Self {
+    pub fn new<L: EventLogger<Flow> + 'static>(logger: L, metadata: Arc<Metadata>) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<Flow>();
-        tokio::spawn(run_flow_collector(rx, logger));
+        tokio::spawn(run_flow_collector(rx, logger, metadata.clone()));
         Self { tx }
     }
 
@@ -83,8 +86,20 @@ impl FlowCollector {
     }
 }
 
-async fn run_flow_collector<L: EventLogger<Flow>>(mut rx: UnboundedReceiver<Flow>, logger: L) {
+async fn run_flow_collector<L: EventLogger<Flow>>(
+    mut rx: UnboundedReceiver<Flow>,
+    logger: L,
+    metadata: Arc<Metadata>,
+) {
     while let Some(flow) = rx.recv().await {
+        let flow = match metadata.ip {
+            IpAddr::V4(ipv4) => Flow {
+                dst_ip: ipv4,
+                ..flow
+            },
+            _ => flow,
+        };
+
         logger
             .log_event(flow)
             .await

@@ -39,13 +39,13 @@ impl Default for SshConfig {
 #[derive(Clone)]
 pub struct SshServer<L: EventLogger<SshLogin>> {
     pub logger: L,
-    pub metadata: Metadata,
+    pub metadata: Arc<Metadata>,
 }
 
 pub struct SshHandler<L: EventLogger<SshLogin>> {
     pub peer_addr: Option<SocketAddr>,
     pub logger: L,
-    pub metadata: Metadata,
+    pub metadata: Arc<Metadata>,
 }
 
 impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
@@ -76,7 +76,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
             auth: SshAuthMethod::Password {
                 password: password.to_string(),
             },
-            metadata: self.metadata.clone(),
+            metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
         Ok(Auth::reject())
@@ -98,7 +98,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
                 key_comment: public_key.comment().to_string(),
                 key_algorithm: public_key.algorithm().to_string(),
             },
-            metadata: self.metadata.clone(),
+            metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
         Ok(Auth::reject())
@@ -121,10 +121,10 @@ async fn get_or_create_host_key(config: &SshConfig) -> Result<keys::PrivateKey> 
 
 pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     config: &SshConfig,
-    metadata: &Metadata,
+    metadata: Arc<Metadata>,
     logger: L,
 ) -> Result<()> {
-    let key = get_or_create_host_key(&config).await?;
+    let key = get_or_create_host_key(config).await?;
     let addr = (config.listen_addr.clone(), config.listen_port);
     let config = server::Config {
         inactivity_timeout: Some(config.inactivity_timeout),
@@ -136,10 +136,7 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     };
 
     let config = Arc::new(config);
-    let mut server = SshServer {
-        logger,
-        metadata: metadata.to_owned(),
-    };
+    let mut server = SshServer { logger, metadata };
 
     log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
     Ok(server.run_on_address(config, addr).await?)
