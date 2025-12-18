@@ -98,14 +98,14 @@ impl FlowCollector {
 #[derive(PartialEq, Eq, Hash, Debug)]
 struct TrackedScanKey {
     src_ip: IpAddr,
-    src_port: u16,
     scan_type: FlowType,
 }
 
 #[derive(PartialEq, Eq, Debug)]
 struct TrackedScan {
     last_active: Instant,
-    ports: BTreeSet<u16>,
+    src_ports: BTreeSet<u16>,
+    dst_ports: BTreeSet<u16>,
 }
 
 async fn run_flow_collector<L: EventLogger<PortScan>>(
@@ -130,17 +130,17 @@ async fn run_flow_collector<L: EventLogger<PortScan>>(
                 scans = partitioned.not_matches;
 
                 for (key, scan) in stale {
-                    if scan.ports.len() < UNIQUE_PORTS_THRESHOLD {
-                        log::info!("No longer tracking suspect scanner {}:{}", key.src_ip, key.src_port);
+                    if scan.dst_ports.len() < UNIQUE_PORTS_THRESHOLD {
+                        log::info!("No longer tracking suspect scanner {}", key.src_ip);
                         continue
                     }
 
                     let event = PortScan {
                         ts: utcnow,
-                        dst_ports: scan.ports.iter().copied().collect(),
+                        dst_ports: scan.dst_ports.iter().copied().collect(),
                         metadata: metadata.as_ref().clone(),
                         src_ip: key.src_ip,
-                        src_port: key.src_port,
+                        src_ports: scan.src_ports.iter().copied().collect(),
                         scan_type: key.scan_type,
                     };
 
@@ -154,20 +154,21 @@ async fn run_flow_collector<L: EventLogger<PortScan>>(
                 let last_active = Instant::now();
                 let key = TrackedScanKey {
                     src_ip: IpAddr::V4(flow.src_ip),
-                    src_port: flow.src_port,
                     scan_type: flow.flow_type,
                 };
 
                 scans.entry(key)
                     .and_modify(|scan| {
-                        scan.ports.insert(flow.dst_port);
+                        scan.dst_ports.insert(flow.dst_port);
+                        scan.src_ports.insert(flow.src_port);
                         scan.last_active = last_active;
                     })
                     .or_insert_with(|| {
                         log::info!("Tracking new potential scanner: {}:{}", flow.src_ip, flow.src_port);
                         TrackedScan {
                             last_active,
-                            ports: BTreeSet::from([flow.dst_port]),
+                            dst_ports: BTreeSet::from([flow.dst_port]),
+                            src_ports: BTreeSet::from([flow.src_port]),
                         }
                     });
             },

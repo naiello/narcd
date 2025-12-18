@@ -35,7 +35,7 @@ pub struct PortScan {
     #[serde(serialize_with = "serialize_ts")]
     pub ts: DateTime<Utc>,
     pub src_ip: IpAddr,
-    pub src_port: u16,
+    pub src_ports: Vec<u16>,
     pub dst_ports: Vec<u16>,
     pub metadata: Metadata,
     pub scan_type: FlowType,
