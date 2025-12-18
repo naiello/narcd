@@ -16,7 +16,7 @@ pub struct Flow {
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(tag = "method", rename_all = "snake_case")
+    serde(rename_all = "snake_case")
 )]
 pub enum FlowType {
     Syn,
