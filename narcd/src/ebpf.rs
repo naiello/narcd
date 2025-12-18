@@ -28,8 +28,8 @@ use crate::{events::PortScan, logger::EventLogger, metadata::Metadata, util::par
 
 const EVENTS_READ_BUF_SIZE: usize = 10;
 const FLOW_COLLECTOR_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
-const FLOW_STALE_THRESHOLD: Duration = Duration::from_secs(15);
-const UNIQUE_PORTS_THRESHOLD: usize = 2;
+const FLOW_STALE_THRESHOLD: Duration = Duration::from_secs(16);
+const UNIQUE_PORTS_THRESHOLD: usize = 1;
 
 pub async fn start_ebpf<L: EventLogger<PortScan> + 'static>(
     metadata: Arc<Metadata>,
@@ -131,7 +131,6 @@ async fn run_flow_collector<L: EventLogger<PortScan>>(
 
                 for (key, scan) in stale {
                     if scan.dst_ports.len() < UNIQUE_PORTS_THRESHOLD {
-                        log::info!("No longer tracking suspect scanner {}", key.src_ip);
                         continue
                     }
 
@@ -163,14 +162,12 @@ async fn run_flow_collector<L: EventLogger<PortScan>>(
                         scan.src_ports.insert(flow.src_port);
                         scan.last_active = last_active;
                     })
-                    .or_insert_with(|| {
-                        log::info!("Tracking new potential scanner: {}:{}", flow.src_ip, flow.src_port);
-                        TrackedScan {
+                    .or_insert_with(|| TrackedScan {
                             last_active,
                             dst_ports: BTreeSet::from([flow.dst_port]),
                             src_ports: BTreeSet::from([flow.src_port]),
                         }
-                    });
+                    );
             },
             else => break,
         }
