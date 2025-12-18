@@ -12,7 +12,7 @@ pub struct Flow {
     pub flow_type: FlowType,
 }
 
-#[cfg_attr(feature = "std", derive(PartialEq, Eq, Debug))]
+#[cfg_attr(feature = "std", derive(PartialEq, Eq, Debug, Hash, Clone, Copy))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum FlowType {
     Syn,

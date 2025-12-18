@@ -1,4 +1,9 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::IpAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use aya::{
@@ -11,18 +16,22 @@ use aya::{
     util::online_cpus,
 };
 use bytes::BytesMut;
+use chrono::Utc;
 use default_net::get_default_interface;
-use narcd_common::Flow;
+use narcd_common::{Flow, FlowType};
 use tokio::{
     io::{Interest, unix::AsyncFd},
     sync::mpsc::{self, UnboundedReceiver},
 };
 
-use crate::{logger::EventLogger, metadata::Metadata};
+use crate::{events::PortScan, logger::EventLogger, metadata::Metadata, util::partition_hashmap};
 
 const EVENTS_READ_BUF_SIZE: usize = 10;
+const FLOW_COLLECTOR_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+const FLOW_STALE_THRESHOLD: Duration = Duration::from_secs(15);
+const UNIQUE_PORTS_THRESHOLD: usize = 2;
 
-pub async fn start_ebpf<L: EventLogger<Flow> + 'static>(
+pub async fn start_ebpf<L: EventLogger<PortScan> + 'static>(
     metadata: Arc<Metadata>,
     logger: L,
 ) -> Result<()> {
@@ -74,7 +83,7 @@ struct FlowCollector {
 }
 
 impl FlowCollector {
-    pub fn new<L: EventLogger<Flow> + 'static>(logger: L, metadata: Arc<Metadata>) -> Self {
+    pub fn new<L: EventLogger<PortScan> + 'static>(logger: L, metadata: Arc<Metadata>) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<Flow>();
         tokio::spawn(run_flow_collector(rx, logger, metadata.clone()));
         Self { tx }
@@ -86,25 +95,84 @@ impl FlowCollector {
     }
 }
 
-async fn run_flow_collector<L: EventLogger<Flow>>(
+#[derive(PartialEq, Eq, Hash, Debug)]
+struct TrackedScanKey {
+    src_ip: IpAddr,
+    src_port: u16,
+    scan_type: FlowType,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+struct TrackedScan {
+    last_active: Instant,
+    ports: BTreeSet<u16>,
+}
+
+async fn run_flow_collector<L: EventLogger<PortScan>>(
     mut rx: UnboundedReceiver<Flow>,
     logger: L,
     metadata: Arc<Metadata>,
 ) {
-    while let Some(flow) = rx.recv().await {
-        let flow = match metadata.ip {
-            IpAddr::V4(ipv4) => Flow {
-                dst_ip: ipv4,
-                ..flow
-            },
-            _ => flow,
-        };
+    let mut sweeper = tokio::time::interval(FLOW_COLLECTOR_SWEEP_INTERVAL);
+    let mut scans: HashMap<TrackedScanKey, TrackedScan> = HashMap::new();
 
-        logger
-            .log_event(flow)
-            .await
-            .inspect_err(|err| log::error!("Failed to log flow: {:?}", err))
-            .ok();
+    loop {
+        tokio::select! {
+            now = sweeper.tick() => {
+                let now = now.into_std();
+                let utcnow = Utc::now();
+
+                let partitioned = partition_hashmap(
+                    scans,
+                    |_, scan| now.duration_since(scan.last_active) > FLOW_STALE_THRESHOLD,
+                );
+                let stale = partitioned.matches;
+                scans = partitioned.not_matches;
+
+                for (key, scan) in stale {
+                    if scan.ports.len() < UNIQUE_PORTS_THRESHOLD {
+                        log::info!("No longer tracking suspect scanner {}:{}", key.src_ip, key.src_port);
+                        continue
+                    }
+
+                    let event = PortScan {
+                        ts: utcnow,
+                        dst_ports: scan.ports.iter().copied().collect(),
+                        metadata: metadata.as_ref().clone(),
+                        src_ip: key.src_ip,
+                        src_port: key.src_port,
+                        scan_type: key.scan_type,
+                    };
+
+                    logger.log_event(event)
+                        .await
+                        .inspect_err(|err| log::error!("Failed to log port scan: {:?}", err))
+                        .ok();
+                }
+            },
+            Some(flow) = rx.recv() => {
+                let last_active = Instant::now();
+                let key = TrackedScanKey {
+                    src_ip: IpAddr::V4(flow.src_ip),
+                    src_port: flow.src_port,
+                    scan_type: flow.flow_type,
+                };
+
+                scans.entry(key)
+                    .and_modify(|scan| {
+                        scan.ports.insert(flow.dst_port);
+                        scan.last_active = last_active;
+                    })
+                    .or_insert_with(|| {
+                        log::info!("Tracking new potential scanner: {}:{}", flow.src_ip, flow.src_port);
+                        TrackedScan {
+                            last_active,
+                            ports: BTreeSet::from([flow.dst_port]),
+                        }
+                    });
+            },
+            else => break,
+        }
     }
 
     log::warn!("Flow collector is shutting down");
