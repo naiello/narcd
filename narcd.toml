@@ -1,0 +1,11 @@
+[log]
+dir = "/var/log/narcd"
+
+[listeners.ssh]
+listen_addr = "0.0.0.0"
+listen_port = 22
+inactivity_timeout_secs = 3600
+auth_rejection_time_secs = 1
+max_auth_attempts = 5
+host_key_file = "/var/db/narcd/ssh_hostkey"
+server_id = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5"

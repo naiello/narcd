@@ -16,7 +16,11 @@ async fn main() -> Result<()> {
     }
     pretty_env_logger::init_timed();
 
-    let config: Config = Default::default();
+    let config = config::Config::builder()
+        .add_source(config::File::with_name("/etc/narcd/narcd").required(false))
+        .add_source(config::File::with_name("narcd").required(false))
+        .build()?
+        .try_deserialize::<Config>()?;
     let imds = imds::Client::builder().build();
     let metadata = Arc::new(resolve_metadata(&imds).await?);
     log::info!("Local IP is: {}", metadata.ip);

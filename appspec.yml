@@ -5,6 +5,8 @@ files:
     destination: /opt/narcd/bin
   - source: service/narcd.service
     destination: /etc/systemd/system
+  - source: narcd.toml
+    destination: /etc/narcd
 hooks:
   AfterInstall:
     - location: codedeploy/after_install.sh

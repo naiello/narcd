@@ -20,6 +20,7 @@ artifacts:
     - codedeploy/*
     - service/*
     - appspec.yml
+    - narcd.toml
 cache:
   paths:
     - $HOME/.cargo/registry/**/*

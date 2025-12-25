@@ -15,8 +15,8 @@ use std::time::Duration;
 pub struct SshConfig {
     pub listen_addr: String,
     pub listen_port: u16,
-    pub inactivity_timeout: Duration,
-    pub auth_rejection_time: Duration,
+    pub inactivity_timeout_secs: u64,
+    pub auth_rejection_time_secs: u64,
     pub max_auth_attempts: usize,
     pub host_key_file: String,
     pub server_id: String,
@@ -27,12 +27,22 @@ impl Default for SshConfig {
         SshConfig {
             listen_addr: "0.0.0.0".to_owned(),
             listen_port: 22,
-            auth_rejection_time: Duration::from_secs(1),
-            inactivity_timeout: Duration::from_secs(3600),
+            auth_rejection_time_secs: 1,
+            inactivity_timeout_secs: 3600,
             max_auth_attempts: 5,
             host_key_file: "/var/db/narcd/ssh_hostkey".to_owned(),
             server_id: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5".to_owned(),
         }
+    }
+}
+
+impl SshConfig {
+    fn auth_rejection_time(&self) -> Duration {
+        Duration::from_secs(self.auth_rejection_time_secs)
+    }
+
+    fn inactivity_timeout(&self) -> Duration {
+        Duration::from_secs(self.inactivity_timeout_secs)
     }
 }
 
@@ -127,8 +137,8 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     let key = get_or_create_host_key(config).await?;
     let addr = (config.listen_addr.clone(), config.listen_port);
     let config = server::Config {
-        inactivity_timeout: Some(config.inactivity_timeout),
-        auth_rejection_time: config.auth_rejection_time,
+        inactivity_timeout: Some(config.inactivity_timeout()),
+        auth_rejection_time: config.auth_rejection_time(),
         max_auth_attempts: config.max_auth_attempts,
         server_id: russh::SshId::Standard(config.server_id.clone()),
         keys: vec![key],
