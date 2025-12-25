@@ -200,9 +200,22 @@ async fn read_event_buffer(
         .collect::<Vec<_>>();
 
     loop {
-        let mut guard = fd.readable_mut().await.unwrap();
+        let mut guard = fd
+            .readable_mut()
+            .await
+            .expect("Could not open eBPF map read buffer");
         loop {
-            let Events { read, .. } = guard.get_inner_mut().read_events(&mut buffers).unwrap();
+            let Events { read, lost } = guard
+                .get_inner_mut()
+                .read_events(&mut buffers)
+                .expect("Failed to read events from eBPF map");
+
+            if lost > 0 {
+                log::warn!(
+                    "Lost {} events from eBPF events map due to ring buffer overwrites",
+                    lost
+                );
+            }
 
             for buf in buffers.iter().take(read) {
                 let flow = unsafe { (buf.as_ptr() as *const Flow).read_unaligned() };
