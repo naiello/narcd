@@ -31,7 +31,7 @@ const FLOW_COLLECTOR_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const FLOW_STALE_THRESHOLD: Duration = Duration::from_secs(16);
 const UNIQUE_PORTS_THRESHOLD: usize = 1;
 
-pub async fn start_ebpf<L: EventLogger<PortScan> + 'static>(
+pub async fn start_ebpf<L: EventLogger<PortScan> + Sync + 'static>(
     metadata: Arc<Metadata>,
     logger: L,
 ) -> Result<()> {
@@ -83,7 +83,10 @@ struct FlowCollector {
 }
 
 impl FlowCollector {
-    pub fn new<L: EventLogger<PortScan> + 'static>(logger: L, metadata: Arc<Metadata>) -> Self {
+    pub fn new<L: EventLogger<PortScan> + Sync + 'static>(
+        logger: L,
+        metadata: Arc<Metadata>,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<Flow>();
         tokio::spawn(run_flow_collector(rx, logger, metadata.clone()));
         Self { tx }
@@ -108,7 +111,65 @@ struct TrackedScan {
     dst_ports: BTreeSet<u16>,
 }
 
-async fn run_flow_collector<L: EventLogger<PortScan>>(
+async fn sweep_stale_flows<L: EventLogger<PortScan> + Sync>(
+    now: Instant,
+    scans: HashMap<TrackedScanKey, TrackedScan>,
+    logger: &L,
+    metadata: &Arc<Metadata>,
+) -> HashMap<TrackedScanKey, TrackedScan> {
+    let utcnow = Utc::now();
+
+    let partitioned = partition_hashmap(scans, |_, scan| {
+        now.duration_since(scan.last_active) > FLOW_STALE_THRESHOLD
+    });
+    let stale = partitioned.matches;
+
+    for (key, scan) in stale {
+        if scan.dst_ports.len() < UNIQUE_PORTS_THRESHOLD {
+            continue;
+        }
+
+        let event = PortScan {
+            ts: utcnow,
+            dst_ports: scan.dst_ports.iter().copied().collect(),
+            metadata: metadata.as_ref().clone(),
+            src_ip: key.src_ip,
+            src_ports: scan.src_ports.iter().copied().collect(),
+            scan_type: key.scan_type,
+        };
+
+        logger
+            .log_event(event)
+            .await
+            .inspect_err(|err| log::error!("Failed to log port scan: {:?}", err))
+            .ok();
+    }
+
+    partitioned.not_matches
+}
+
+fn collect_flow(flow: Flow, scans: &mut HashMap<TrackedScanKey, TrackedScan>) {
+    let last_active = Instant::now();
+    let key = TrackedScanKey {
+        src_ip: IpAddr::V4(flow.src_ip),
+        scan_type: flow.flow_type,
+    };
+
+    scans
+        .entry(key)
+        .and_modify(|scan| {
+            scan.dst_ports.insert(flow.dst_port);
+            scan.src_ports.insert(flow.src_port);
+            scan.last_active = last_active;
+        })
+        .or_insert_with(|| TrackedScan {
+            last_active,
+            dst_ports: BTreeSet::from([flow.dst_port]),
+            src_ports: BTreeSet::from([flow.src_port]),
+        });
+}
+
+async fn run_flow_collector<L: EventLogger<PortScan> + Sync>(
     mut rx: UnboundedReceiver<Flow>,
     logger: L,
     metadata: Arc<Metadata>,
@@ -119,56 +180,9 @@ async fn run_flow_collector<L: EventLogger<PortScan>>(
     loop {
         tokio::select! {
             now = sweeper.tick() => {
-                let now = now.into_std();
-                let utcnow = Utc::now();
-
-                let partitioned = partition_hashmap(
-                    scans,
-                    |_, scan| now.duration_since(scan.last_active) > FLOW_STALE_THRESHOLD,
-                );
-                let stale = partitioned.matches;
-                scans = partitioned.not_matches;
-
-                for (key, scan) in stale {
-                    if scan.dst_ports.len() < UNIQUE_PORTS_THRESHOLD {
-                        continue
-                    }
-
-                    let event = PortScan {
-                        ts: utcnow,
-                        dst_ports: scan.dst_ports.iter().copied().collect(),
-                        metadata: metadata.as_ref().clone(),
-                        src_ip: key.src_ip,
-                        src_ports: scan.src_ports.iter().copied().collect(),
-                        scan_type: key.scan_type,
-                    };
-
-                    logger.log_event(event)
-                        .await
-                        .inspect_err(|err| log::error!("Failed to log port scan: {:?}", err))
-                        .ok();
-                }
+                scans = sweep_stale_flows(now.into_std(), scans, &logger, &metadata).await;
             },
-            Some(flow) = rx.recv() => {
-                let last_active = Instant::now();
-                let key = TrackedScanKey {
-                    src_ip: IpAddr::V4(flow.src_ip),
-                    scan_type: flow.flow_type,
-                };
-
-                scans.entry(key)
-                    .and_modify(|scan| {
-                        scan.dst_ports.insert(flow.dst_port);
-                        scan.src_ports.insert(flow.src_port);
-                        scan.last_active = last_active;
-                    })
-                    .or_insert_with(|| TrackedScan {
-                            last_active,
-                            dst_ports: BTreeSet::from([flow.dst_port]),
-                            src_ports: BTreeSet::from([flow.src_port]),
-                        }
-                    );
-            },
+            Some(flow) = rx.recv() => collect_flow(flow, &mut scans),
             else => break,
         }
     }
