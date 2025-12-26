@@ -2,6 +2,7 @@ use anyhow::Result;
 use aws_config::imds;
 use narcd::config::Config;
 use narcd::ebpf::start_ebpf;
+use narcd::listeners::http::start_server as start_http_server;
 use narcd::listeners::ssh::start_server;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
@@ -39,6 +40,14 @@ async fn main() -> Result<()> {
         start_server(&config.listeners.ssh, ssh_md, ssh_logger)
             .await
             .inspect_err(|err| log::error!("Failed to start ssh handler: {:?}", err))
+    });
+
+    let http_logger = FileLogger::new(&config.log.dir, "http.log").await?;
+    let http_md = metadata.clone();
+    tokio::spawn(async move {
+        start_http_server(&config.listeners.http, http_md, http_logger)
+            .await
+            .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
     });
 
     signal::ctrl_c().await?;

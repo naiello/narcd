@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -61,6 +62,7 @@ impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
                     }
                 } else {
                     log::error!("bad recv");
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         });

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`narcd` is a network threat monitoring daemon that combines eBPF-based packet inspection with SSH honeypot capabilities. It monitors network traffic for port scans and logs SSH authentication attempts, designed to run on Linux systems (particularly AWS EC2 instances).
+`narcd` is a network threat monitoring daemon that combines eBPF-based packet inspection with SSH and HTTP honeypot capabilities. It monitors network traffic for port scans and logs SSH authentication attempts and HTTP requests, designed to run on Linux systems (particularly AWS EC2 instances).
 
 ## Build System
 
@@ -56,7 +56,7 @@ cargo test -p narcd-common
 2. **Userspace Component** (`narcd/src/main.rs`)
    - Loads and attaches eBPF program
    - Reads flow events from eBPF via PerfEventArray
-   - Runs SSH honeypot server
+   - Runs SSH and HTTP honeypot servers
    - Logs events to JSONL files
 
 ### Flow Collection & Port Scan Detection
@@ -81,12 +81,28 @@ Implementation in `narcd/src/listeners/ssh.rs`:
 - Configurable via `narcd.toml` (listen address, port, timeouts, server ID)
 - Auto-generates RSA host key if missing
 
+### HTTP Honeypot
+
+Implementation in `narcd/src/listeners/http.rs`:
+- Accepts HTTP requests and returns configurable status code (default 403 Forbidden)
+- Logs request method, path, headers, body, and authentication credentials
+- Supports HTTP Basic Auth extraction (username/password from Authorization header)
+- Configurable via `narcd.toml` (listen address, port, response status, body/header size limits)
+- Uses hyper 1.x for HTTP/1.1 server implementation
+- Per-connection timeouts prevent resource exhaustion
+
+Event structure (`HttpRequest` in `narcd/src/events.rs`):
+- `HttpAuthMethod` enum: None, Basic (username/password), or Other (non-basic auth)
+- Logs common headers: User-Agent, Referer, Host, Content-Type
+- Request body logged with configurable size limit (default 4KB)
+- `body_truncated` flag indicates if body exceeded size limit
+
 ### Event Logging
 
 Generic `EventLogger` trait in `narcd/src/logger.rs`:
 - `FileLogger` implementation writes JSONL to disk
 - Async channel-based (2048 buffer) to avoid blocking
-- Two log files: `scan.log` (port scans) and `ssh.log` (SSH attempts)
+- Three log files: `scan.log` (port scans), `ssh.log` (SSH attempts), `http.log` (HTTP requests)
 
 ### Metadata System
 
