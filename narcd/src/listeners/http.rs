@@ -76,8 +76,8 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
             ts: Utc::now(),
             method,
             path,
-            src_ip: Some(peer_addr.ip()),
-            src_port: Some(peer_addr.port()),
+            src_ip: peer_addr.ip(),
+            src_port: peer_addr.port(),
             auth,
             user_agent,
             referer,
@@ -110,22 +110,20 @@ fn extract_auth(headers: &hyper::HeaderMap) -> HttpAuthMethod {
         None => return HttpAuthMethod::None,
     };
 
-    if let Some(basic_part) = auth_str.strip_prefix("Basic ") {
-        if let Some((username, password)) = BASE64_STANDARD
-            .decode(basic_part)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .and_then(|s| {
-                s.split_once(':')
-                    .map(|(u, p)| (u.to_string(), p.to_string()))
-            })
-        {
-            return HttpAuthMethod::Basic { username, password };
-        }
-    }
+    let basic_auth = auth_str
+        .strip_prefix("Basic ")
+        .and_then(|basic_part| BASE64_STANDARD.decode(basic_part).ok())
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .and_then(|s| {
+            s.split_once(':')
+                .map(|(u, p)| (u.to_string(), p.to_string()))
+        });
 
-    HttpAuthMethod::Other {
-        value: auth_str.to_string(),
+    match basic_auth {
+        Some((username, password)) => HttpAuthMethod::Basic { username, password },
+        None => HttpAuthMethod::Other {
+            value: auth_str.to_string(),
+        },
     }
 }
 

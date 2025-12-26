@@ -55,8 +55,8 @@ pub struct HttpRequest {
     pub ts: DateTime<Utc>,
     pub method: String,
     pub path: String,
-    pub src_ip: Option<IpAddr>,
-    pub src_port: Option<u16>,
+    pub src_ip: IpAddr,
+    pub src_port: u16,
 
     pub auth: HttpAuthMethod,
 
