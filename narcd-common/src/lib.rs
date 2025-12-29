@@ -20,4 +20,25 @@ pub struct Flow {
 )]
 pub enum FlowType {
     Syn,
+    Udp,
 }
+
+#[cfg_attr(feature = "std", derive(PartialEq, Eq, Debug, Hash, Clone, Copy))]
+pub struct PacketSource {
+    pub dst_port: u16,
+    pub proto: u8,
+}
+
+#[cfg(feature = "std")]
+unsafe impl aya::Pod for PacketSource {}
+
+#[cfg_attr(feature = "std", derive(PartialEq, Eq, Debug, Hash))]
+#[derive(Clone, Copy)]
+pub enum PacketDisposition {
+    Pass,
+    Ignore,
+    Drop,
+}
+
+#[cfg(feature = "std")]
+unsafe impl aya::Pod for PacketDisposition {}

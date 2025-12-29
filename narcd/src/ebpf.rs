@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, anyhow};
 use aya::{
     Ebpf,
     maps::{
-        MapData, PerfEventArray,
+        HashMap as EbpfHashMap, MapData, PerfEventArray,
         perf::{Events, PerfEventArrayBuffer},
     },
     programs::{Xdp, XdpFlags},
@@ -18,7 +18,7 @@ use aya::{
 use bytes::BytesMut;
 use chrono::Utc;
 use default_net::get_default_interface;
-use narcd_common::{Flow, FlowType};
+use narcd_common::{Flow, FlowType, PacketDisposition, PacketSource};
 use tokio::{
     io::{Interest, unix::AsyncFd},
     sync::mpsc::{self, UnboundedReceiver},
@@ -34,6 +34,7 @@ const UNIQUE_PORTS_THRESHOLD: usize = 1;
 pub async fn start_ebpf<L: EventLogger<PortScan> + Sync + 'static>(
     metadata: Arc<Metadata>,
     logger: L,
+    packet_disposition: &HashMap<PacketSource, PacketDisposition>,
 ) -> Result<()> {
     let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
@@ -62,6 +63,19 @@ pub async fn start_ebpf<L: EventLogger<PortScan> + Sync + 'static>(
         .context("narcd-ebpf did not declare an EVENTS array")?
         .try_into()
         .context("EVENTS map is not PerfEventArray")?;
+
+    let mut pktdisp: EbpfHashMap<_, PacketSource, PacketDisposition> = ebpf
+        .map_mut("PKTDISP")
+        .context("narc-ebpf did not declare a PKTDISP array")?
+        .try_into()
+        .context("PKTDISP map is not HashMap")?;
+
+    for (src, disp) in packet_disposition {
+        pktdisp.insert(src, disp, 0).context(format!(
+            "Failed to insert ignore entry {:?} -> {:?}",
+            src, disp
+        ))?;
+    }
 
     let collector = FlowCollector::new(logger, metadata);
     for cpu_id in online_cpus().map_err(|(_, error)| error)? {

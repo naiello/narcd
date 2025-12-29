@@ -6,6 +6,8 @@ use narcd::listeners::http::start_server as start_http_server;
 use narcd::listeners::ssh::start_server;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
+use narcd_common::{PacketDisposition, PacketSource};
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use tokio::signal;
@@ -28,8 +30,20 @@ async fn main() -> Result<()> {
 
     let scan_logger = FileLogger::new(&config.log.dir, "scan.log").await?;
     let scan_md = metadata.clone();
+
+    // TODO: Move this into config.
+    // Don't log wireguard traffic from the management IP
+    let mut pktdisp = HashMap::new();
+    pktdisp.insert(
+        PacketSource {
+            dst_port: 33666,
+            proto: 17, // UDP
+        },
+        PacketDisposition::Ignore,
+    );
+
     tokio::spawn(async move {
-        start_ebpf(scan_md, scan_logger)
+        start_ebpf(scan_md, scan_logger, &pktdisp)
             .await
             .inspect_err(|err| log::error!("Failed to start eBPF: {:?}", err))
     });
