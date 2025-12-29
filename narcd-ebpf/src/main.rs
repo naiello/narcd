@@ -45,7 +45,6 @@ fn process_packet(ctx: XdpContext) -> Result<u32, ()> {
     let dst_ip = unsafe { (*ipv4_hdr).dst_addr() };
     match unsafe { (*ipv4_hdr).proto } {
         IpProto::Tcp => handle_tcp(ctx, src_ip, dst_ip),
-        IpProto::Udp => handle_udp(ctx, src_ip, dst_ip),
         _ => Ok(xdp_action::XDP_PASS),
     }
 }
