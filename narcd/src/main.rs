@@ -2,6 +2,7 @@ use anyhow::Result;
 use aws_config::imds;
 use narcd::config::Config;
 use narcd::ebpf::start_ebpf;
+use narcd::ipasn::IpAsnDb;
 use narcd::listeners::http::start_server as start_http_server;
 use narcd::listeners::ssh::start_server;
 use narcd::logger::FileLogger;
@@ -28,8 +29,7 @@ async fn main() -> Result<()> {
     let metadata = Arc::new(resolve_metadata(&imds).await?);
     log::info!("Local IP is: {}", metadata.ip);
 
-    let scan_logger = FileLogger::new(&config.log.dir, "scan.log").await?;
-    let scan_md = metadata.clone();
+    let ipasn_db = Arc::new(IpAsnDb::new(config.ipasn).await?);
 
     // TODO: Move this into config.
     // Don't log wireguard traffic from the management IP
@@ -42,24 +42,29 @@ async fn main() -> Result<()> {
         PacketDisposition::Ignore,
     );
 
+    let scan_logger = FileLogger::new(&config.log.dir, "scan.log").await?;
+    let scan_md = metadata.clone();
+    let scan_ipasn_db = ipasn_db.clone();
     tokio::spawn(async move {
-        start_ebpf(scan_md, scan_logger, &pktdisp)
+        start_ebpf(scan_md, scan_logger, &pktdisp, scan_ipasn_db)
             .await
             .inspect_err(|err| log::error!("Failed to start eBPF: {:?}", err))
     });
 
     let ssh_logger = FileLogger::new(&config.log.dir, "ssh.log").await?;
     let ssh_md = metadata.clone();
+    let ssh_ipasn_db = ipasn_db.clone();
     tokio::spawn(async move {
-        start_server(&config.listeners.ssh, ssh_md, ssh_logger)
+        start_server(&config.listeners.ssh, ssh_md, ssh_logger, ssh_ipasn_db)
             .await
             .inspect_err(|err| log::error!("Failed to start ssh handler: {:?}", err))
     });
 
     let http_logger = FileLogger::new(&config.log.dir, "http.log").await?;
     let http_md = metadata.clone();
+    let http_ipasn_db = ipasn_db.clone();
     tokio::spawn(async move {
-        start_http_server(&config.listeners.http, http_md, http_logger)
+        start_http_server(&config.listeners.http, http_md, http_logger, http_ipasn_db)
             .await
             .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
     });

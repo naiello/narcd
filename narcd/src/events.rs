@@ -27,6 +27,8 @@ pub struct SshLogin {
     pub auth: SshAuthMethod,
     pub src_ip: Option<IpAddr>,
     pub src_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_as: Option<IpAsMetadata>,
     pub metadata: Metadata,
 }
 
@@ -37,6 +39,8 @@ pub struct PortScan {
     pub src_ip: IpAddr,
     pub src_ports: Vec<u16>,
     pub dst_ports: Vec<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_as: Option<IpAsMetadata>,
     pub metadata: Metadata,
     pub scan_type: FlowType,
 }
@@ -74,7 +78,16 @@ pub struct HttpRequest {
     pub body_size: usize,
     pub body_truncated: bool,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_as: Option<IpAsMetadata>,
     pub metadata: Metadata,
+}
+
+#[derive(PartialEq, Eq, Serialize, Debug)]
+pub struct IpAsMetadata {
+    pub num: u32,
+    pub desc: String,
+    pub country: String,
 }
 
 fn serialize_ts<S: Serializer>(v: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {

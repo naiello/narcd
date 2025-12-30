@@ -1,4 +1,5 @@
 use crate::events::{SshAuthMethod, SshLogin};
+use crate::ipasn::IpAsnDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
 use anyhow::Result;
@@ -7,7 +8,7 @@ use rand_core::OsRng;
 use russh::keys;
 use russh::server::{self, Auth, Server as _};
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,12 +51,14 @@ impl SshConfig {
 pub struct SshServer<L: EventLogger<SshLogin>> {
     pub logger: L,
     pub metadata: Arc<Metadata>,
+    pub ipasn_db: Arc<IpAsnDb>,
 }
 
 pub struct SshHandler<L: EventLogger<SshLogin>> {
     pub peer_addr: Option<SocketAddr>,
     pub logger: L,
     pub metadata: Arc<Metadata>,
+    pub ipasn_db: Arc<IpAsnDb>,
 }
 
 impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
@@ -66,6 +69,7 @@ impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
             peer_addr,
             logger: self.logger.clone(),
             metadata: self.metadata.clone(),
+            ipasn_db: self.ipasn_db.clone(),
         }
     }
 }
@@ -78,14 +82,21 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
         user: &str,
         password: &str,
     ) -> Result<server::Auth, Self::Error> {
+        let src_ip = self.peer_addr.map(|addr| addr.ip());
+        let src_ip_as = match src_ip {
+            Some(IpAddr::V4(ipv4)) => self.ipasn_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = SshLogin {
             ts: Utc::now(),
-            src_ip: self.peer_addr.map(|addr| addr.ip()),
+            src_ip,
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
             auth: SshAuthMethod::Password {
                 password: password.to_string(),
             },
+            src_ip_as,
             metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
@@ -97,10 +108,16 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
         user: &str,
         public_key: &keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
+        let src_ip = self.peer_addr.map(|addr| addr.ip());
+        let src_ip_as = match src_ip {
+            Some(IpAddr::V4(ipv4)) => self.ipasn_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let key_fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
         let event = SshLogin {
             ts: Utc::now(),
-            src_ip: self.peer_addr.map(|addr| addr.ip()),
+            src_ip,
             src_port: self.peer_addr.map(|addr| addr.port()),
             username: user.to_string(),
             auth: SshAuthMethod::PublicKey {
@@ -108,6 +125,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
                 key_comment: public_key.comment().to_string(),
                 key_algorithm: public_key.algorithm().to_string(),
             },
+            src_ip_as,
             metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
@@ -133,6 +151,7 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     config: &SshConfig,
     metadata: Arc<Metadata>,
     logger: L,
+    ipasn_db: Arc<IpAsnDb>,
 ) -> Result<()> {
     let key = get_or_create_host_key(config).await?;
     let addr = (config.listen_addr.clone(), config.listen_port);
@@ -146,7 +165,11 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     };
 
     let config = Arc::new(config);
-    let mut server = SshServer { logger, metadata };
+    let mut server = SshServer {
+        logger,
+        metadata,
+        ipasn_db,
+    };
 
     log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
     Ok(server.run_on_address(config, addr).await?)

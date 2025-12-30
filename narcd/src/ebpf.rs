@@ -24,7 +24,10 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
 };
 
-use crate::{events::PortScan, logger::EventLogger, metadata::Metadata, util::partition_hashmap};
+use crate::{
+    events::PortScan, ipasn::IpAsnDb, logger::EventLogger, metadata::Metadata,
+    util::partition_hashmap,
+};
 
 const EVENTS_READ_BUF_SIZE: usize = 10;
 const FLOW_COLLECTOR_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
@@ -35,6 +38,7 @@ pub async fn start_ebpf<L: EventLogger<PortScan> + Sync + 'static>(
     metadata: Arc<Metadata>,
     logger: L,
     packet_disposition: &HashMap<PacketSource, PacketDisposition>,
+    ipasn_db: Arc<IpAsnDb>,
 ) -> Result<()> {
     let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
@@ -77,7 +81,7 @@ pub async fn start_ebpf<L: EventLogger<PortScan> + Sync + 'static>(
         ))?;
     }
 
-    let collector = FlowCollector::new(logger, metadata);
+    let collector = FlowCollector::new(logger, metadata, ipasn_db);
     for cpu_id in online_cpus().map_err(|(_, error)| error)? {
         let buf = events.open(cpu_id, None)?;
         let fd = AsyncFd::with_interest(buf, Interest::READABLE)?;
@@ -100,9 +104,10 @@ impl FlowCollector {
     pub fn new<L: EventLogger<PortScan> + Sync + 'static>(
         logger: L,
         metadata: Arc<Metadata>,
+        ipasn_db: Arc<IpAsnDb>,
     ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<Flow>();
-        tokio::spawn(run_flow_collector(rx, logger, metadata.clone()));
+        tokio::spawn(run_flow_collector(rx, logger, metadata.clone(), ipasn_db));
         Self { tx }
     }
 
@@ -130,6 +135,7 @@ async fn sweep_stale_flows<L: EventLogger<PortScan> + Sync>(
     scans: HashMap<TrackedScanKey, TrackedScan>,
     logger: &L,
     metadata: &Arc<Metadata>,
+    ipasn_db: &Arc<IpAsnDb>,
 ) -> HashMap<TrackedScanKey, TrackedScan> {
     let utcnow = Utc::now();
 
@@ -143,12 +149,18 @@ async fn sweep_stale_flows<L: EventLogger<PortScan> + Sync>(
             continue;
         }
 
+        let src_ip_as = match key.src_ip {
+            IpAddr::V4(ipv4) => ipasn_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = PortScan {
             ts: utcnow,
             dst_ports: scan.dst_ports.iter().copied().collect(),
             metadata: metadata.as_ref().clone(),
             src_ip: key.src_ip,
             src_ports: scan.src_ports.iter().copied().collect(),
+            src_ip_as,
             scan_type: key.scan_type,
         };
 
@@ -187,6 +199,7 @@ async fn run_flow_collector<L: EventLogger<PortScan> + Sync>(
     mut rx: UnboundedReceiver<Flow>,
     logger: L,
     metadata: Arc<Metadata>,
+    ipasn_db: Arc<IpAsnDb>,
 ) {
     let mut sweeper = tokio::time::interval(FLOW_COLLECTOR_SWEEP_INTERVAL);
     let mut scans: HashMap<TrackedScanKey, TrackedScan> = HashMap::new();
@@ -194,7 +207,7 @@ async fn run_flow_collector<L: EventLogger<PortScan> + Sync>(
     loop {
         tokio::select! {
             now = sweeper.tick() => {
-                scans = sweep_stale_flows(now.into_std(), scans, &logger, &metadata).await;
+                scans = sweep_stale_flows(now.into_std(), scans, &logger, &metadata, &ipasn_db).await;
             },
             Some(flow) = rx.recv() => collect_flow(flow, &mut scans),
             else => break,

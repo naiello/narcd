@@ -1,4 +1,5 @@
 use crate::events::{HttpAuthMethod, HttpRequest};
+use crate::ipasn::IpAsnDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
 use anyhow::Result;
@@ -11,7 +12,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -50,6 +51,7 @@ pub struct HttpServer<L: EventLogger<HttpRequest>> {
     pub logger: L,
     pub metadata: Arc<Metadata>,
     pub config: Arc<HttpConfig>,
+    pub ipasn_db: Arc<IpAsnDb>,
 }
 
 impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
@@ -72,11 +74,17 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
         let (body, body_size, body_truncated) =
             read_body_with_limit(req.into_body(), self.config.max_body_size).await?;
 
+        let src_ip = peer_addr.ip();
+        let src_ip_as = match src_ip {
+            IpAddr::V4(ipv4) => self.ipasn_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = HttpRequest {
             ts: Utc::now(),
             method,
             path,
-            src_ip: peer_addr.ip(),
+            src_ip,
             src_port: peer_addr.port(),
             auth,
             user_agent,
@@ -86,6 +94,7 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
             body,
             body_size,
             body_truncated,
+            src_ip_as,
             metadata: self.metadata.as_ref().clone(),
         };
 
@@ -150,6 +159,7 @@ pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Send + Sync + 's
     config: &HttpConfig,
     metadata: Arc<Metadata>,
     logger: L,
+    ipasn_db: Arc<IpAsnDb>,
 ) -> Result<()> {
     let addr = format!("{}:{}", config.listen_addr, config.listen_port).parse::<SocketAddr>()?;
 
@@ -161,6 +171,7 @@ pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Send + Sync + 's
         logger,
         metadata,
         config: config.clone(),
+        ipasn_db,
     });
 
     loop {
