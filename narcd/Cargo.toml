@@ -41,6 +41,9 @@ flate2 = { workspace = true }
 reqwest = { workspace = true }
 csv-async = { workspace = true }
 futures-util = { workspace = true }
+maxminddb = { workspace = true }
+tar = { workspace = true }
+aws-sdk-ssm = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

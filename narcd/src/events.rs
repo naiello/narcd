@@ -19,7 +19,7 @@ pub enum SshAuthMethod {
     },
 }
 
-#[derive(PartialEq, Eq, Serialize, Debug)]
+#[derive(PartialEq, Serialize, Debug)]
 pub struct SshLogin {
     #[serde(serialize_with = "serialize_ts")]
     pub ts: DateTime<Utc>,
@@ -29,10 +29,12 @@ pub struct SshLogin {
     pub src_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_as: Option<IpAsMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_geo: Option<IpGeoMetadata>,
     pub metadata: Metadata,
 }
 
-#[derive(PartialEq, Eq, Serialize, Debug)]
+#[derive(PartialEq, Serialize, Debug)]
 pub struct PortScan {
     #[serde(serialize_with = "serialize_ts")]
     pub ts: DateTime<Utc>,
@@ -41,6 +43,8 @@ pub struct PortScan {
     pub dst_ports: Vec<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_as: Option<IpAsMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_geo: Option<IpGeoMetadata>,
     pub metadata: Metadata,
     pub scan_type: FlowType,
 }
@@ -53,7 +57,7 @@ pub enum HttpAuthMethod {
     Other { value: String },
 }
 
-#[derive(PartialEq, Eq, Serialize, Debug)]
+#[derive(PartialEq, Serialize, Debug)]
 pub struct HttpRequest {
     #[serde(serialize_with = "serialize_ts")]
     pub ts: DateTime<Utc>,
@@ -80,6 +84,8 @@ pub struct HttpRequest {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_as: Option<IpAsMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip_geo: Option<IpGeoMetadata>,
     pub metadata: Metadata,
 }
 
@@ -88,6 +94,19 @@ pub struct IpAsMetadata {
     pub num: u32,
     pub desc: String,
     pub country: String,
+}
+
+#[derive(PartialEq, Serialize, Debug, Clone)]
+pub struct IpGeoMetadata {
+    pub country_code: Option<String>,
+    pub country_name: Option<String>,
+    pub region_code: Option<String>,
+    pub region_name: Option<String>,
+    pub city: Option<String>,
+    pub postal_code: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub timezone: Option<String>,
 }
 
 fn serialize_ts<S: Serializer>(v: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {

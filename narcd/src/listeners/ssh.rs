@@ -1,5 +1,6 @@
 use crate::events::{SshAuthMethod, SshLogin};
 use crate::ipasn::IpAsnDb;
+use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
 use anyhow::Result;
@@ -52,6 +53,7 @@ pub struct SshServer<L: EventLogger<SshLogin>> {
     pub logger: L,
     pub metadata: Arc<Metadata>,
     pub ipasn_db: Arc<IpAsnDb>,
+    pub ipgeo_db: Arc<IpGeoDb>,
 }
 
 pub struct SshHandler<L: EventLogger<SshLogin>> {
@@ -59,6 +61,7 @@ pub struct SshHandler<L: EventLogger<SshLogin>> {
     pub logger: L,
     pub metadata: Arc<Metadata>,
     pub ipasn_db: Arc<IpAsnDb>,
+    pub ipgeo_db: Arc<IpGeoDb>,
 }
 
 impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
@@ -70,6 +73,7 @@ impl<L: EventLogger<SshLogin> + 'static> server::Server for SshServer<L> {
             logger: self.logger.clone(),
             metadata: self.metadata.clone(),
             ipasn_db: self.ipasn_db.clone(),
+            ipgeo_db: self.ipgeo_db.clone(),
         }
     }
 }
@@ -88,6 +92,11 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
             _ => None,
         };
 
+        let src_ip_geo = match src_ip {
+            Some(IpAddr::V4(ipv4)) => self.ipgeo_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = SshLogin {
             ts: Utc::now(),
             src_ip,
@@ -97,6 +106,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
                 password: password.to_string(),
             },
             src_ip_as,
+            src_ip_geo,
             metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
@@ -114,6 +124,11 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
             _ => None,
         };
 
+        let src_ip_geo = match src_ip {
+            Some(IpAddr::V4(ipv4)) => self.ipgeo_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let key_fingerprint = public_key.fingerprint(keys::HashAlg::Sha256).to_string();
         let event = SshLogin {
             ts: Utc::now(),
@@ -126,6 +141,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
                 key_algorithm: public_key.algorithm().to_string(),
             },
             src_ip_as,
+            src_ip_geo,
             metadata: self.metadata.as_ref().clone(),
         };
         self.logger.log_event(event).await?;
@@ -152,6 +168,7 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
     metadata: Arc<Metadata>,
     logger: L,
     ipasn_db: Arc<IpAsnDb>,
+    ipgeo_db: Arc<IpGeoDb>,
 ) -> Result<()> {
     let key = get_or_create_host_key(config).await?;
     let addr = (config.listen_addr.clone(), config.listen_port);
@@ -169,6 +186,7 @@ pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
         logger,
         metadata,
         ipasn_db,
+        ipgeo_db,
     };
 
     log::info!("starting ssh listener on {}:{}", addr.0, addr.1);

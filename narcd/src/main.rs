@@ -3,6 +3,7 @@ use aws_config::imds;
 use narcd::config::Config;
 use narcd::ebpf::start_ebpf;
 use narcd::ipasn::IpAsnDb;
+use narcd::ipgeo::IpGeoDb;
 use narcd::listeners::http::start_server as start_http_server;
 use narcd::listeners::ssh::start_server;
 use narcd::logger::FileLogger;
@@ -29,7 +30,11 @@ async fn main() -> Result<()> {
     let metadata = Arc::new(resolve_metadata(&imds).await?);
     log::info!("Local IP is: {}", metadata.ip);
 
+    let sdk_config =
+        Arc::new(aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await);
+
     let ipasn_db = Arc::new(IpAsnDb::new(config.ipasn).await?);
+    let ipgeo_db = Arc::new(IpGeoDb::new(config.ipgeo, sdk_config).await?);
 
     // TODO: Move this into config.
     // Don't log wireguard traffic from the management IP
@@ -45,8 +50,9 @@ async fn main() -> Result<()> {
     let scan_logger = FileLogger::new(&config.log.dir, "scan.log").await?;
     let scan_md = metadata.clone();
     let scan_ipasn_db = ipasn_db.clone();
+    let scan_ipgeo_db = ipgeo_db.clone();
     tokio::spawn(async move {
-        start_ebpf(scan_md, scan_logger, &pktdisp, scan_ipasn_db)
+        start_ebpf(scan_md, scan_logger, &pktdisp, scan_ipasn_db, scan_ipgeo_db)
             .await
             .inspect_err(|err| log::error!("Failed to start eBPF: {:?}", err))
     });
@@ -54,19 +60,33 @@ async fn main() -> Result<()> {
     let ssh_logger = FileLogger::new(&config.log.dir, "ssh.log").await?;
     let ssh_md = metadata.clone();
     let ssh_ipasn_db = ipasn_db.clone();
+    let ssh_ipgeo_db = ipgeo_db.clone();
     tokio::spawn(async move {
-        start_server(&config.listeners.ssh, ssh_md, ssh_logger, ssh_ipasn_db)
-            .await
-            .inspect_err(|err| log::error!("Failed to start ssh handler: {:?}", err))
+        start_server(
+            &config.listeners.ssh,
+            ssh_md,
+            ssh_logger,
+            ssh_ipasn_db,
+            ssh_ipgeo_db,
+        )
+        .await
+        .inspect_err(|err| log::error!("Failed to start ssh handler: {:?}", err))
     });
 
     let http_logger = FileLogger::new(&config.log.dir, "http.log").await?;
     let http_md = metadata.clone();
     let http_ipasn_db = ipasn_db.clone();
+    let http_ipgeo_db = ipgeo_db.clone();
     tokio::spawn(async move {
-        start_http_server(&config.listeners.http, http_md, http_logger, http_ipasn_db)
-            .await
-            .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
+        start_http_server(
+            &config.listeners.http,
+            http_md,
+            http_logger,
+            http_ipasn_db,
+            http_ipgeo_db,
+        )
+        .await
+        .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
     });
 
     signal::ctrl_c().await?;

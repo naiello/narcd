@@ -1,4 +1,5 @@
 use crate::ipasn::IpAsnDbConfig;
+use crate::ipgeo::IpGeoDbConfig;
 use crate::listeners::ListenersConfig;
 use crate::logger::LoggingConfig;
 use serde::Deserialize;
@@ -9,4 +10,5 @@ pub struct Config {
     pub listeners: ListenersConfig,
     pub log: LoggingConfig,
     pub ipasn: IpAsnDbConfig,
+    pub ipgeo: IpGeoDbConfig,
 }

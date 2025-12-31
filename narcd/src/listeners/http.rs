@@ -1,5 +1,6 @@
 use crate::events::{HttpAuthMethod, HttpRequest};
 use crate::ipasn::IpAsnDb;
+use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
 use anyhow::Result;
@@ -52,6 +53,7 @@ pub struct HttpServer<L: EventLogger<HttpRequest>> {
     pub metadata: Arc<Metadata>,
     pub config: Arc<HttpConfig>,
     pub ipasn_db: Arc<IpAsnDb>,
+    pub ipgeo_db: Arc<IpGeoDb>,
 }
 
 impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
@@ -80,6 +82,11 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
             _ => None,
         };
 
+        let src_ip_geo = match src_ip {
+            IpAddr::V4(ipv4) => self.ipgeo_db.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = HttpRequest {
             ts: Utc::now(),
             method,
@@ -95,6 +102,7 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
             body_size,
             body_truncated,
             src_ip_as,
+            src_ip_geo,
             metadata: self.metadata.as_ref().clone(),
         };
 
@@ -160,6 +168,7 @@ pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Send + Sync + 's
     metadata: Arc<Metadata>,
     logger: L,
     ipasn_db: Arc<IpAsnDb>,
+    ipgeo_db: Arc<IpGeoDb>,
 ) -> Result<()> {
     let addr = format!("{}:{}", config.listen_addr, config.listen_port).parse::<SocketAddr>()?;
 
@@ -172,6 +181,7 @@ pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Send + Sync + 's
         metadata,
         config: config.clone(),
         ipasn_db,
+        ipgeo_db,
     });
 
     loop {

@@ -100,11 +100,6 @@ async fn load_from_cache(
 
     let bytes = tokio::fs::read(cache_path).await?;
     let records = bincode::deserialize::<Vec<IpAsnRecord>>(&bytes)?;
-    log::info!(
-        "Loaded {} IP-to-ASN records from disk cache (cache age: {}s)",
-        records.len(),
-        age
-    );
 
     Ok(Some(records))
 }
