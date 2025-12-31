@@ -154,8 +154,6 @@ async fn load_from_cache(
     }
 
     let bytes = tokio::fs::read(cache_path).await?;
-    log::info!("Loaded MaxMind database from cache");
-
     Ok(Some(bytes))
 }
 
@@ -187,7 +185,7 @@ async fn fetch_api_key_from_parameter_store(
 }
 
 async fn download_maxmind_db(download_url: &str, api_key: &str) -> Result<Vec<u8>> {
-    log::info!("Downloading MaxMind database from MaxMind");
+    log::info!("Downloading MaxMind database");
 
     let client = reqwest::Client::new();
     let (user, pass) = api_key
@@ -203,8 +201,6 @@ async fn download_maxmind_db(download_url: &str, api_key: &str) -> Result<Vec<u8
         .await
         .context("Failed to read MaxMind download response")?;
 
-    log::info!("Extracting .mmdb file from tar.gz archive");
-
     let tar_decoder = GzDecoder::new(response.as_ref());
     let mut archive = tar::Archive::new(tar_decoder);
 
@@ -213,10 +209,8 @@ async fn download_maxmind_db(download_url: &str, api_key: &str) -> Result<Vec<u8
         let path = entry.path()?;
 
         if path.extension() == Some(OsStr::new("mmdb")) {
-            log::info!("Found .mmdb file in archive: {}", path.display());
             let mut mmdb_bytes = Vec::new();
             entry.read_to_end(&mut mmdb_bytes)?;
-            log::info!("Extracted {} bytes from .mmdb file", mmdb_bytes.len());
             return Ok(mmdb_bytes);
         }
     }
