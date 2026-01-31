@@ -34,7 +34,7 @@ rand_core = { version = "0.6.4", features = ["getrandom", "std"] }
 russh = "0.51.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-tokio = { version = "1.44.1", features = ["fs", "macros"] }
+tokio = { version = "1.47.1", features = ["fs", "macros"] }
 default-net = "0.22.0"
 network-types = "0.1.0"
 hyper = { version = "1.5", features = ["server", "http1"] }
@@ -50,6 +50,8 @@ maxminddb = { version = "0.24", features = ["mmap"] }
 tar = "0.4"
 aws-sdk-ssm = "1.68"
 uuid = { version = "1.20.0", features = ["v4"] }
+tokio-graceful = "0.2.2"
+tokio-util = { version = "0.7.18", features = ["rt"] }
 
 [profile.release.package.narcd-ebpf]
 debug = 2

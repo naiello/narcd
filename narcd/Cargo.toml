@@ -45,6 +45,8 @@ maxminddb = { workspace = true }
 tar = { workspace = true }
 aws-sdk-ssm = { workspace = true }
 uuid = { workspace = true }
+tokio-graceful = { workspace = true }
+tokio-util = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

@@ -9,7 +9,9 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::{select, sync::RwLock, time};
+use tokio_graceful::ShutdownGuard;
+use tokio_util::task::AbortOnDropHandle;
 use uuid::Uuid;
 
 use serde::Deserialize;
@@ -55,6 +57,7 @@ impl Default for IpGeoDbConfig {
 
 pub struct IpGeoDb {
     reader: Arc<RwLock<Reader<Mmap>>>,
+    _refresh_task: AbortOnDropHandle<()>,
 }
 
 struct DatabasePaths {
@@ -63,7 +66,11 @@ struct DatabasePaths {
 }
 
 impl IpGeoDb {
-    pub async fn new(config: IpGeoDbConfig, sdk_config: Arc<SdkConfig>) -> Result<Self> {
+    pub async fn new(
+        config: IpGeoDbConfig,
+        sdk_config: Arc<SdkConfig>,
+        shutdown: ShutdownGuard,
+    ) -> Result<Self> {
         let config = Arc::new(config);
         let mut task = IpGeoRefreshTask {
             config: config.clone(),
@@ -80,9 +87,13 @@ impl IpGeoDb {
             task,
             reader: reader.clone(),
         };
-        tokio::spawn(async move { periodic_task.run().await });
+        let handle =
+            shutdown.into_spawn_task_fn(|guard| async move { periodic_task.run(guard).await });
 
-        Ok(Self { reader })
+        Ok(Self {
+            reader,
+            _refresh_task: AbortOnDropHandle::new(handle),
+        })
     }
 
     pub async fn lookup(&self, ip: Ipv4Addr) -> Option<IpGeoMetadata> {
@@ -90,7 +101,11 @@ impl IpGeoDb {
 
         let city: maxminddb::geoip2::City = reader
             .lookup(IpAddr::V4(ip))
-            .inspect_err(|err| log::warn!("failed to look up {ip} in maxmind: {err}"))
+            .inspect_err(|err| {
+                if !matches!(err, maxminddb::MaxMindDBError::AddressNotFoundError(_)) {
+                    log::warn!("failed to look up {ip} in maxmind: {err}")
+                }
+            })
             .ok()?;
 
         Some(IpGeoMetadata {
@@ -152,14 +167,21 @@ struct IpGeoRefreshTask {
 }
 
 impl IpGeoPeriodicRefreshTask {
-    async fn run(&mut self) -> ! {
+    async fn run(&mut self, shutdown: ShutdownGuard) -> () {
+        let mut refresh = time::interval(Duration::from_hours(1));
         loop {
-            match self.task.reload(self.reader.clone()).await {
-                Ok(_) => log::info!("Database reload complete"),
-                Err(e) => log::error!("Failed to refresh MaxMind database: {}", e),
+            select! {
+                _ = refresh.tick() => {
+                    match self.task.reload(self.reader.clone()).await {
+                        Ok(_) => log::info!("Database reload complete"),
+                        Err(e) => log::error!("Failed to refresh MaxMind database: {}", e),
+                    }
+                },
+                _ = shutdown.cancelled() => {
+                    log::info!("ipgeo refresh task stopping");
+                    break;
+                },
             }
-
-            tokio::time::sleep(Duration::from_hours(1)).await;
         }
     }
 }
@@ -248,9 +270,12 @@ impl IpGeoRefreshTask {
 
         let latest_ts = self.get_latest_available_db_timestamp().await?;
         let current_ts = self.get_current_db_timestamp().await?;
-        Ok(latest_ts <= current_ts).inspect(|_| {
+        let is_fresh = latest_ts <= current_ts;
+
+        if !is_fresh {
             log::info!("Newer MaxMind database available. Ours: {latest_ts}, theirs: {latest_ts}")
-        })
+        }
+        Ok(is_fresh)
     }
 
     async fn get_latest_available_db_timestamp(&self) -> Result<DateTime<Utc>> {

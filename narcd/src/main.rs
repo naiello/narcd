@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_config::imds;
 use narcd::config::Config;
 use narcd::ebpf::start_ebpf;
@@ -12,7 +12,7 @@ use narcd_common::{PacketDisposition, PacketSource};
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
-use tokio::signal;
+use tokio_graceful::Shutdown;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,6 +21,7 @@ async fn main() -> Result<()> {
     }
     pretty_env_logger::init_timed();
 
+    let shutdown = Shutdown::default();
     let config = config::Config::builder()
         .add_source(config::File::with_name("/etc/narcd/narcd").required(false))
         .add_source(config::File::with_name("narcd").required(false))
@@ -33,8 +34,8 @@ async fn main() -> Result<()> {
     let sdk_config =
         Arc::new(aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await);
 
-    let ipasn_db = Arc::new(IpAsnDb::new(config.ipasn).await?);
-    let ipgeo_db = Arc::new(IpGeoDb::new(config.ipgeo, sdk_config).await?);
+    let ipasn_db = Arc::new(IpAsnDb::new(config.ipasn, shutdown.guard()).await?);
+    let ipgeo_db = Arc::new(IpGeoDb::new(config.ipgeo, sdk_config, shutdown.guard()).await?);
 
     // TODO: Move this into config.
     // Don't log wireguard traffic from the management IP
@@ -89,8 +90,12 @@ async fn main() -> Result<()> {
         .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
     });
 
-    signal::ctrl_c().await?;
-    log::info!("Exiting due to SIGTERM");
+    shutdown
+        .shutdown_with_limit(std::time::Duration::from_mins(2))
+        .await
+        .context("Failure while running graceful shutdown")?;
+
+    log::info!("Shutdown complete");
 
     Ok(())
 }
