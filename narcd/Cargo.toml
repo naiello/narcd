@@ -44,6 +44,7 @@ futures-util = { workspace = true }
 maxminddb = { workspace = true }
 tar = { workspace = true }
 aws-sdk-ssm = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

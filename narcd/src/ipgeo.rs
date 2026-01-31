@@ -1,16 +1,16 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use aws_config::SdkConfig;
 use aws_sdk_ssm::Client as SsmClient;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use flate2::read::GzDecoder;
-use maxminddb::Reader;
+use maxminddb::{Mmap, Reader};
 use std::ffi::OsStr;
-use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use serde::Deserialize;
 
@@ -19,16 +19,32 @@ use crate::events::IpGeoMetadata;
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct IpGeoDbConfig {
     pub data_dir: String,
-    pub refresh_interval: Duration,
     pub download_url: String,
     pub api_key_parameter: String,
+}
+
+impl IpGeoDbConfig {
+    pub fn cache_path(&self) -> PathBuf {
+        PathBuf::new()
+            .join(&self.data_dir)
+            .join("geolite2-city.mmdb")
+    }
+
+    pub fn meta_path(&self) -> PathBuf {
+        PathBuf::new()
+            .join(&self.data_dir)
+            .join("geolite2-city.mmdb.meta")
+    }
+
+    pub fn tmp_path(&self) -> PathBuf {
+        PathBuf::new().join(&self.data_dir).join("tmp")
+    }
 }
 
 impl Default for IpGeoDbConfig {
     fn default() -> Self {
         IpGeoDbConfig {
             data_dir: "/var/db/narcd".to_owned(),
-            refresh_interval: Duration::from_hours(4),
             download_url:
                 "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz"
                     .to_owned(),
@@ -38,21 +54,33 @@ impl Default for IpGeoDbConfig {
 }
 
 pub struct IpGeoDb {
-    reader: Arc<RwLock<Reader<Vec<u8>>>>,
+    reader: Arc<RwLock<Reader<Mmap>>>,
+}
+
+struct DatabasePaths {
+    db: PathBuf,
+    meta: PathBuf,
 }
 
 impl IpGeoDb {
     pub async fn new(config: IpGeoDbConfig, sdk_config: Arc<SdkConfig>) -> Result<Self> {
-        let mmdb_data = refresh_ipgeo_db(&config, sdk_config.as_ref()).await?;
-        let reader = Reader::from_source(mmdb_data)
-            .context("Failed to create MaxMind reader from database")?;
-        let reader = Arc::new(RwLock::new(reader));
-
-        tokio::spawn(periodic_refresh_ipgeo_db(
-            reader.clone(),
-            config.clone(),
+        let config = Arc::new(config);
+        let mut task = IpGeoRefreshTask {
+            config: config.clone(),
             sdk_config,
+            is_bootstrapped: false,
+        };
+        let reader = Arc::new(RwLock::new(
+            task.bootstrap()
+                .await
+                .context("Failed to bootstrap ipgeo database")?,
         ));
+
+        let mut periodic_task = IpGeoPeriodicRefreshTask {
+            task,
+            reader: reader.clone(),
+        };
+        tokio::spawn(async move { periodic_task.run().await });
 
         Ok(Self { reader })
     }
@@ -109,158 +137,236 @@ impl IpGeoDb {
     }
 }
 
-async fn periodic_refresh_ipgeo_db(
-    reader: Arc<RwLock<Reader<Vec<u8>>>>,
-    config: IpGeoDbConfig,
+struct IpGeoPeriodicRefreshTask {
+    reader: Arc<RwLock<Reader<Mmap>>>,
+    task: IpGeoRefreshTask,
+}
+
+struct IpGeoRefreshTask {
+    config: Arc<IpGeoDbConfig>,
     sdk_config: Arc<SdkConfig>,
-) -> ! {
-    loop {
-        let new_db = refresh_ipgeo_db(&config, sdk_config.as_ref())
+    is_bootstrapped: bool,
+}
+
+impl IpGeoPeriodicRefreshTask {
+    async fn run(&mut self) -> ! {
+        loop {
+            match self.task.reload(self.reader.clone()).await {
+                Ok(_) => log::info!("Database reload complete"),
+                Err(e) => log::error!("Failed to refresh MaxMind database: {}", e),
+            }
+
+            tokio::time::sleep(Duration::from_hours(1)).await;
+        }
+    }
+}
+
+impl IpGeoRefreshTask {
+    async fn bootstrap(&mut self) -> Result<Reader<Mmap>> {
+        if self.is_bootstrapped {
+            // Defense against accidentally calling multuple times and mmap'ing the same file in
+            // multiple places, which would be unsafe when we perform a reload.
+            bail!("bootstrap called multiple times!");
+        }
+
+        let db = &self.config.cache_path();
+        let meta = &self.config.meta_path();
+        let paths = &self
+            .refresh_ipgeo_db()
             .await
-            .and_then(|new_db| {
-                Reader::from_source(new_db).context("Failed to build MaxMind DB reader")
-            });
+            .context("Failed to bootstrap ipgeo database")?;
 
-        match new_db {
-            Ok(new_db) => *reader.write().await = new_db,
-            Err(e) => log::error!("Failed to refresh MaxMind database: {}", e),
+        if &paths.db != db {
+            tokio::fs::rename(&paths.db, db).await?;
+        }
+        if &paths.meta != meta {
+            tokio::fs::rename(&paths.meta, meta).await?;
         }
 
-        tokio::time::sleep(Duration::from_mins(15)).await;
-    }
-}
+        let reader = Reader::open_mmap(db).context("Failed to mmap MaxMind DB")?;
 
-async fn load_from_cache(
-    cache_path: &Path,
-    timestamp_path: &Path,
-    refresh_interval: Duration,
-) -> Result<Option<Vec<u8>>> {
-    if !cache_path.exists() || !timestamp_path.exists() {
-        return Ok(None);
+        self.is_bootstrapped = true;
+        Ok(reader)
     }
 
-    let timestamp_str = tokio::fs::read_to_string(timestamp_path).await?;
-    let cached_time = timestamp_str.parse::<i64>()?;
-
-    let now = Utc::now().timestamp();
-    let age = (now - cached_time).max(0) as u64;
-
-    if age >= refresh_interval.as_secs() {
-        log::info!(
-            "MaxMind disk cache is stale (age: {}s), will re-download",
-            age
-        );
-        return Ok(None);
-    }
-
-    let bytes = tokio::fs::read(cache_path).await?;
-    Ok(Some(bytes))
-}
-
-async fn fetch_api_key_from_parameter_store(
-    sdk_config: &SdkConfig,
-    parameter_name: &str,
-) -> Result<String> {
-    let ssm_client = SsmClient::new(sdk_config);
-
-    let response = ssm_client
-        .get_parameter()
-        .name(parameter_name)
-        .with_decryption(true)
-        .send()
-        .await
-        .context(format!(
-            "Failed to fetch API key from Parameter Store: {}",
-            parameter_name
-        ))?;
-
-    let api_key = response
-        .parameter()
-        .ok_or_else(|| anyhow!("Parameter not found: {}", parameter_name))?
-        .value()
-        .ok_or_else(|| anyhow!("Parameter has no value: {}", parameter_name))?
-        .to_string();
-
-    Ok(api_key)
-}
-
-async fn download_maxmind_db(download_url: &str, api_key: &str) -> Result<Vec<u8>> {
-    log::info!("Downloading MaxMind database");
-
-    let client = reqwest::Client::new();
-    let (user, pass) = api_key
-        .split_once(":")
-        .context("API key is not in a valid format (expected <account>:<license-key>)")?;
-    let response = client
-        .get(download_url)
-        .basic_auth(user, Some(pass))
-        .send()
-        .await
-        .context("Failed to download MaxMind database")?
-        .bytes()
-        .await
-        .context("Failed to read MaxMind download response")?;
-
-    let tar_decoder = GzDecoder::new(response.as_ref());
-    let mut archive = tar::Archive::new(tar_decoder);
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?;
-
-        if path.extension() == Some(OsStr::new("mmdb")) {
-            let mut mmdb_bytes = Vec::new();
-            entry.read_to_end(&mut mmdb_bytes)?;
-            return Ok(mmdb_bytes);
+    async fn reload(&mut self, reader: Arc<RwLock<Reader<Mmap>>>) -> Result<()> {
+        if !self.is_bootstrapped {
+            bail!("bootstrap was never called!");
         }
+
+        let db = &self.config.cache_path();
+        let meta = &self.config.meta_path();
+        let paths = &self
+            .refresh_ipgeo_db()
+            .await
+            .context("Failed to refresh DB")?;
+
+        // Safety: write lock must be held to ensure no one is reading from any previously
+        // mmap'd versions of this file.
+        {
+            let mut write = reader.write().await;
+            if &paths.db != db {
+                tokio::fs::rename(&paths.db, db).await?;
+            }
+            if &paths.meta != meta {
+                tokio::fs::rename(&paths.meta, meta).await?;
+            }
+            let reader = Reader::open_mmap(db).context("Failed to mmap MaxMind DB")?;
+            *write = reader;
+        }
+
+        Ok(())
     }
 
-    Err(anyhow!("No .mmdb file found in tar.gz archive"))
-}
-
-async fn write_maxmind_db(
-    cache_path: &Path,
-    timestamp_path: &Path,
-    mmdb_data: &[u8],
-) -> Result<()> {
-    let temp_cache = cache_path.with_extension("tmp");
-    tokio::fs::write(&temp_cache, mmdb_data).await?;
-
-    let temp_timestamp = timestamp_path.with_extension("tmp");
-    let timestamp = Utc::now().timestamp();
-    tokio::fs::write(&temp_timestamp, timestamp.to_string()).await?;
-
-    tokio::fs::rename(&temp_cache, cache_path).await?;
-    tokio::fs::rename(&temp_timestamp, timestamp_path).await?;
-
-    log::info!("Saved MaxMind database to {}", cache_path.display());
-
-    Ok(())
-}
-
-async fn refresh_ipgeo_db(config: &IpGeoDbConfig, sdk_config: &SdkConfig) -> Result<Vec<u8>> {
-    let cache_path = Path::new(&config.data_dir).join("geolite2-city.mmdb");
-    let timestamp_path = Path::new(&config.data_dir).join("geolite2-city.mmdb.meta");
-
-    match load_from_cache(&cache_path, &timestamp_path, config.refresh_interval).await {
-        Ok(Some(data)) => return Ok(data),
-        Ok(None) => {
-            // Cache is stale or doesn't exist, continue to download
+    async fn refresh_ipgeo_db(&mut self) -> Result<DatabasePaths> {
+        if self.is_current_db_fresh().await? {
+            log::info!("MaxMind data is fresh");
+            let paths = DatabasePaths {
+                db: self.config.cache_path(),
+                meta: self.config.meta_path(),
+            };
+            return Ok(paths);
         }
-        Err(e) => {
-            log::warn!(
-                "Failed to load MaxMind DB from disk, will re-download: {}",
-                e
-            );
-        }
+
+        log::info!("MaxMind cache is stale or unavailable, reloading");
+        let api_key = self.fetch_api_key_from_parameter_store().await?;
+        self.download_maxmind_db(&api_key).await
     }
 
-    tokio::fs::create_dir_all(&config.data_dir).await?;
+    async fn is_current_db_fresh(&self) -> Result<bool> {
+        let cache_path = self.config.cache_path();
+        let meta_path = self.config.meta_path();
 
-    let api_key = fetch_api_key_from_parameter_store(sdk_config, &config.api_key_parameter).await?;
+        if !cache_path.exists() || !meta_path.exists() {
+            log::info!("MaxMind cache does not exist, bootstrapping");
+            tokio::fs::create_dir_all(&self.config.data_dir).await?;
+            return Ok(false);
+        }
 
-    let mmdb_data = download_maxmind_db(&config.download_url, &api_key).await?;
-    write_maxmind_db(&cache_path, &timestamp_path, &mmdb_data).await?;
+        let latest_ts = self.get_latest_available_db_timestamp().await?;
+        let current_ts = self.get_current_db_timestamp().await?;
+        Ok(latest_ts <= current_ts).inspect(|_| {
+            log::info!("Newer MaxMind database available. Ours: {latest_ts}, theirs: {latest_ts}")
+        })
+    }
 
-    Ok(mmdb_data)
+    async fn get_latest_available_db_timestamp(&self) -> Result<DateTime<Utc>> {
+        let api_key = self.fetch_api_key_from_parameter_store().await?;
+        let client = reqwest::Client::new();
+        let (user, pass) = api_key
+            .split_once(":")
+            .context("API key is not in a valid format (expected <account>:<license-key>)")?;
+
+        client
+            .head(&self.config.download_url)
+            .basic_auth(user, Some(pass))
+            .send()
+            .await
+            .and_then(|response| response.error_for_status())
+            .context("Failed to check MaxMind database headers")?
+            .headers()
+            .get("last-modified")
+            .ok_or_else(|| anyhow!("MaxMind did not provide a last-modified date"))
+            .and_then(|hdr| hdr.to_str().context("last-modified was not a string"))
+            .and_then(|ts| DateTime::parse_from_rfc2822(ts).context("invalid last-modified date"))
+            .map(|ts| ts.to_utc())
+    }
+
+    async fn get_current_db_timestamp(&self) -> Result<DateTime<Utc>> {
+        tokio::fs::read_to_string(self.config.meta_path())
+            .await
+            .context("Failed to read meta file")
+            .and_then(|ts| {
+                DateTime::parse_from_rfc3339(ts.trim()).context("Failed to parse meta file")
+            })
+            .map(|ts| ts.to_utc())
+    }
+
+    async fn fetch_api_key_from_parameter_store(&self) -> Result<String> {
+        let ssm_client = SsmClient::new(self.sdk_config.as_ref());
+
+        let parameter_name = &self.config.api_key_parameter;
+        let response = ssm_client
+            .get_parameter()
+            .name(parameter_name)
+            .with_decryption(true)
+            .send()
+            .await
+            .context(format!(
+                "Failed to fetch API key from Parameter Store: {}",
+                parameter_name
+            ))?;
+
+        let api_key = response
+            .parameter()
+            .ok_or_else(|| anyhow!("Parameter not found: {}", parameter_name))?
+            .value()
+            .ok_or_else(|| anyhow!("Parameter has no value: {}", parameter_name))?
+            .to_string();
+
+        Ok(api_key)
+    }
+
+    async fn download_maxmind_db(&self, api_key: &str) -> Result<DatabasePaths> {
+        log::info!("Downloading MaxMind database");
+
+        let uuid = Uuid::new_v4().to_string();
+        let new_db_path = self.config.tmp_path().join(&uuid);
+        let new_meta_path = self.config.tmp_path().join(&uuid).join("meta");
+        tokio::fs::create_dir_all(new_db_path.clone()).await?;
+        tokio::fs::write(&new_meta_path, "foobar").await?;
+
+        let client = reqwest::Client::new();
+        let (user, pass) = api_key
+            .split_once(":")
+            .context("API key is not in a valid format (expected <account>:<license-key>)")?;
+        let request = client
+            .get(&self.config.download_url)
+            .basic_auth(user, Some(pass))
+            .send()
+            .await
+            .context("Failed to download MaxMind database")?;
+
+        let mtime = request
+            .headers()
+            .get("last-modified")
+            .ok_or_else(|| anyhow!("maxmind did not provide last-modified"))
+            .and_then(|hdr| hdr.to_str().context("last-modified was not a string"))
+            .and_then(|ts| {
+                DateTime::parse_from_rfc2822(ts).context("could not parse last-modified")
+            })
+            .map(|ts| ts.to_utc().to_rfc3339())?;
+        tokio::fs::write(&new_meta_path, mtime).await?;
+
+        let body = request
+            .bytes()
+            .await
+            .context("Failed to read MaxMind download response")?;
+
+        let tar_decoder = GzDecoder::new(body.as_ref());
+        let mut archive = tar::Archive::new(tar_decoder);
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?;
+
+            if path.extension() == Some(OsStr::new("mmdb")) {
+                log::info!("Unpacking database to {}", new_db_path.display());
+
+                // TODO: Make this async, or run in spawn_blocking
+                entry
+                    .unpack_in(&new_db_path)
+                    .context("Failed to unpack database")?;
+
+                let paths = DatabasePaths {
+                    db: new_db_path.join(entry.path()?),
+                    meta: new_meta_path,
+                };
+
+                return Ok(paths);
+            }
+        }
+
+        Err(anyhow!("No .mmdb file found in tar.gz archive"))
+    }
 }
