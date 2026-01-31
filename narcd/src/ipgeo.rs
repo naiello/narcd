@@ -88,7 +88,10 @@ impl IpGeoDb {
     pub async fn lookup(&self, ip: Ipv4Addr) -> Option<IpGeoMetadata> {
         let reader = self.reader.read().await;
 
-        let city: maxminddb::geoip2::City = reader.lookup(IpAddr::V4(ip)).ok()?;
+        let city: maxminddb::geoip2::City = reader
+            .lookup(IpAddr::V4(ip))
+            .inspect_err(|err| log::warn!("failed to look up {ip} in maxmind: {err}"))
+            .ok()?;
 
         Some(IpGeoMetadata {
             country_code: city
