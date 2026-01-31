@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use aws_config::imds;
 use narcd::config::Config;
-use narcd::ebpf::start_ebpf;
+use narcd::ebpf::EbpfListener;
 use narcd::ipasn::IpAsnDb;
 use narcd::ipgeo::IpGeoDb;
 use narcd::listeners::http::start_server as start_http_server;
-use narcd::listeners::ssh::start_server;
+use narcd::listeners::ssh::SshServer;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
 use narcd_common::{PacketDisposition, PacketSource};
@@ -48,33 +48,31 @@ async fn main() -> Result<()> {
         PacketDisposition::Ignore,
     );
 
-    let scan_logger = FileLogger::new(&config.log.dir, "scan.log").await?;
-    let scan_md = metadata.clone();
-    let scan_ipasn_db = ipasn_db.clone();
-    let scan_ipgeo_db = ipgeo_db.clone();
-    tokio::spawn(async move {
-        start_ebpf(scan_md, scan_logger, &pktdisp, scan_ipasn_db, scan_ipgeo_db)
-            .await
-            .inspect_err(|err| log::error!("Failed to start eBPF: {:?}", err))
-    });
+    let scan_logger = FileLogger::new(&config.log.dir, "scan.log", shutdown.guard()).await?;
+    let _ebpf = EbpfListener::start(
+        metadata.clone(),
+        scan_logger,
+        pktdisp,
+        ipasn_db.clone(),
+        ipgeo_db.clone(),
+        shutdown.guard(),
+    )
+    .await
+    .context("Failed to init eBPF")?;
 
-    let ssh_logger = FileLogger::new(&config.log.dir, "ssh.log").await?;
-    let ssh_md = metadata.clone();
-    let ssh_ipasn_db = ipasn_db.clone();
-    let ssh_ipgeo_db = ipgeo_db.clone();
-    tokio::spawn(async move {
-        start_server(
-            &config.listeners.ssh,
-            ssh_md,
-            ssh_logger,
-            ssh_ipasn_db,
-            ssh_ipgeo_db,
-        )
-        .await
-        .inspect_err(|err| log::error!("Failed to start ssh handler: {:?}", err))
-    });
+    let ssh_logger = FileLogger::new(&config.log.dir, "ssh.log", shutdown.guard()).await?;
+    let _ssh = SshServer::start(
+        &config.listeners.ssh,
+        metadata.clone(),
+        ssh_logger,
+        ipasn_db.clone(),
+        ipgeo_db.clone(),
+        shutdown.guard(),
+    )
+    .await
+    .context("Failed to start SSH server")?;
 
-    let http_logger = FileLogger::new(&config.log.dir, "http.log").await?;
+    let http_logger = FileLogger::new(&config.log.dir, "http.log", shutdown.guard()).await?;
     let http_md = metadata.clone();
     let http_ipasn_db = ipasn_db.clone();
     let http_ipgeo_db = ipgeo_db.clone();

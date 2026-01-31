@@ -3,6 +3,7 @@ use crate::ipasn::IpAsnDb;
 use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
+use crate::util::Shared;
 use anyhow::Result;
 use base64::prelude::*;
 use chrono::Utc;
@@ -163,7 +164,7 @@ async fn read_body_with_limit(
     Ok((Some(body_str), body_size, body_truncated))
 }
 
-pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Send + Sync + 'static>(
+pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Shared>(
     config: &HttpConfig,
     metadata: Arc<Metadata>,
     logger: L,

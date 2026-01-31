@@ -3,7 +3,7 @@ use narcd_common::FlowType;
 use serde::{Serialize, Serializer};
 use std::net::IpAddr;
 
-use crate::metadata::Metadata;
+use crate::{metadata::Metadata, util::Shared};
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -34,6 +34,8 @@ pub struct SshLogin {
     pub metadata: Metadata,
 }
 
+impl Shared for SshLogin {}
+
 #[derive(PartialEq, Serialize, Debug)]
 pub struct PortScan {
     #[serde(serialize_with = "serialize_ts")]
@@ -48,6 +50,8 @@ pub struct PortScan {
     pub metadata: Metadata,
     pub scan_type: FlowType,
 }
+
+impl Shared for PortScan {}
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -88,6 +92,8 @@ pub struct HttpRequest {
     pub src_ip_geo: Option<IpGeoMetadata>,
     pub metadata: Metadata,
 }
+
+impl Shared for HttpRequest {}
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 pub struct IpAsMetadata {

@@ -1,5 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
+pub trait Shared: Send + Sync + 'static {}
+
 pub struct PartitionedHashMap<K, V> {
     pub matches: HashMap<K, V>,
     pub not_matches: HashMap<K, V>,

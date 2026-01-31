@@ -2,10 +2,13 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::AsyncWriteExt;
+use tokio::select;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio_graceful::ShutdownGuard;
+use tokio_util::task::AbortOnDropHandle;
+
+use crate::util::Shared;
 
 const LOG_CHAN_SIZE: usize = 2048;
 
@@ -28,7 +31,7 @@ pub trait EventLogger<E: Serialize>: Send + Clone {
 
 pub struct FileLogger<E: Serialize> {
     tx: mpsc::Sender<E>,
-    _writer: Arc<JoinHandle<()>>,
+    _writer: Arc<AbortOnDropHandle<()>>,
 }
 
 impl<E: Serialize> Clone for FileLogger<E> {
@@ -40,8 +43,14 @@ impl<E: Serialize> Clone for FileLogger<E> {
     }
 }
 
-impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
-    pub async fn new(log_dir: impl AsRef<Path>, filename: &str) -> Result<Self> {
+impl<E: Shared + Serialize> Shared for FileLogger<E> {}
+
+impl<E: Serialize + Shared> FileLogger<E> {
+    pub async fn new(
+        log_dir: impl AsRef<Path>,
+        filename: &str,
+        shutdown: ShutdownGuard,
+    ) -> Result<Self> {
         let filename = log_dir.as_ref().join(filename);
         let mut log_file = tokio::fs::OpenOptions::new()
             .append(true)
@@ -50,29 +59,42 @@ impl<E: Serialize + Send + Sync + 'static> FileLogger<E> {
             .await?;
         let (tx, mut rx) = mpsc::channel::<E>(LOG_CHAN_SIZE);
 
-        let writer = tokio::spawn(async move {
+        let writer = shutdown.into_spawn_task_fn(|guard| async move {
             loop {
-                if let Some(event) = rx.recv().await {
-                    match serde_json::to_vec(&event) {
-                        Ok(event) => {
-                            log_file.write_all(&event).await.ok();
-                            log_file.write_all(b"\n").await.ok();
+                select! {
+                    maybe_event = rx.recv() => {
+                        match maybe_event {
+                            Some(event) => {
+                                match serde_json::to_vec(&event) {
+                                    Ok(event) => {
+                                        log_file.write_all(&event).await.ok();
+                                        log_file.write_all(b"\n").await.ok();
+                                    }
+                                    Err(e) => log::error!("failed to serialize event: {:?}", e),
+                                }
+                            },
+                            None => {
+                                log::warn!("logger channel is closed, stopping eventlogger");
+                                break;
+                            },
                         }
-                        Err(e) => log::error!("failed to serialize event: {:?}", e),
-                    }
-                } else {
-                    log::error!("bad recv");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    },
+                    _ = guard.cancelled() => {
+                        log::info!("eventlogger shutting down");
+                        break;
+                    },
                 }
             }
         });
-        let _writer = Arc::new(writer);
 
-        Ok(FileLogger { tx, _writer })
+        Ok(FileLogger {
+            tx,
+            _writer: Arc::new(AbortOnDropHandle::new(writer)),
+        })
     }
 }
 
-impl<E: Serialize + Send + Sync + 'static> EventLogger<E> for FileLogger<E> {
+impl<E: Serialize + Shared> EventLogger<E> for FileLogger<E> {
     async fn log_event(&self, event: E) -> Result<()> {
         Ok(self.tx.send(event).await?)
     }

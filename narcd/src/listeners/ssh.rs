@@ -12,6 +12,9 @@ use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::select;
+use tokio_graceful::ShutdownGuard;
+use tokio_util::task::AbortOnDropHandle;
 
 #[derive(Deserialize)]
 pub struct SshConfig {
@@ -149,6 +152,63 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
     }
 }
 
+pub struct SshServerHandle {
+    _server_task: AbortOnDropHandle<()>,
+}
+
+impl<L: EventLogger<SshLogin> + 'static> SshServer<L> {
+    pub async fn start(
+        config: &SshConfig,
+        metadata: Arc<Metadata>,
+        logger: L,
+        ipasn_db: Arc<IpAsnDb>,
+        ipgeo_db: Arc<IpGeoDb>,
+        shutdown: ShutdownGuard,
+    ) -> Result<SshServerHandle> {
+        let key = get_or_create_host_key(config).await?;
+        let addr = (config.listen_addr.clone(), config.listen_port);
+        let config = server::Config {
+            inactivity_timeout: Some(config.inactivity_timeout()),
+            auth_rejection_time: config.auth_rejection_time(),
+            max_auth_attempts: config.max_auth_attempts,
+            server_id: russh::SshId::Standard(config.server_id.clone()),
+            keys: vec![key],
+            ..Default::default()
+        };
+
+        let config = Arc::new(config);
+        let mut server = SshServer {
+            logger,
+            metadata,
+            ipasn_db,
+            ipgeo_db,
+        };
+
+        log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
+        let task = shutdown.into_spawn_task_fn(|guard| async move {
+            select! {
+                res = server.run_on_address(config, addr) => {
+                    match res {
+                        Ok(_) => {
+                            log::warn!("SSH server exited unexpectedly");
+                        }
+                        Err(err) => {
+                            log::error!("SSH server died: {err}");
+                        }
+                    }
+                },
+                _ = guard.cancelled() => {
+                    log::info!("SSH server shutting down");
+                }
+            }
+        });
+
+        Ok(SshServerHandle {
+            _server_task: AbortOnDropHandle::new(task),
+        })
+    }
+}
+
 async fn create_host_key(filename: &str) -> Result<keys::PrivateKey> {
     log::info!("generating new ssh hostkey");
     let key = keys::PrivateKey::random(&mut OsRng, keys::Algorithm::Rsa { hash: None })?;
@@ -161,34 +221,4 @@ async fn get_or_create_host_key(config: &SshConfig) -> Result<keys::PrivateKey> 
         Ok(bytes) => Ok(keys::PrivateKey::from_openssh(bytes)?),
         Err(_) => Ok(create_host_key(&config.host_key_file).await?),
     }
-}
-
-pub async fn start_server<L: EventLogger<SshLogin> + 'static>(
-    config: &SshConfig,
-    metadata: Arc<Metadata>,
-    logger: L,
-    ipasn_db: Arc<IpAsnDb>,
-    ipgeo_db: Arc<IpGeoDb>,
-) -> Result<()> {
-    let key = get_or_create_host_key(config).await?;
-    let addr = (config.listen_addr.clone(), config.listen_port);
-    let config = server::Config {
-        inactivity_timeout: Some(config.inactivity_timeout()),
-        auth_rejection_time: config.auth_rejection_time(),
-        max_auth_attempts: config.max_auth_attempts,
-        server_id: russh::SshId::Standard(config.server_id.clone()),
-        keys: vec![key],
-        ..Default::default()
-    };
-
-    let config = Arc::new(config);
-    let mut server = SshServer {
-        logger,
-        metadata,
-        ipasn_db,
-        ipgeo_db,
-    };
-
-    log::info!("starting ssh listener on {}:{}", addr.0, addr.1);
-    Ok(server.run_on_address(config, addr).await?)
 }
