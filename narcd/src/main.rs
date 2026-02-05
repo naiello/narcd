@@ -4,7 +4,7 @@ use narcd::config::Config;
 use narcd::ebpf::EbpfListener;
 use narcd::ipasn::IpAsnDb;
 use narcd::ipgeo::IpGeoDb;
-use narcd::listeners::http::start_server as start_http_server;
+use narcd::listeners::http::HttpServer;
 use narcd::listeners::ssh::SshServer;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
@@ -73,20 +73,16 @@ async fn main() -> Result<()> {
     .context("Failed to start SSH server")?;
 
     let http_logger = FileLogger::new(&config.log.dir, "http.log", shutdown.guard()).await?;
-    let http_md = metadata.clone();
-    let http_ipasn_db = ipasn_db.clone();
-    let http_ipgeo_db = ipgeo_db.clone();
-    tokio::spawn(async move {
-        start_http_server(
-            &config.listeners.http,
-            http_md,
-            http_logger,
-            http_ipasn_db,
-            http_ipgeo_db,
-        )
-        .await
-        .inspect_err(|err| log::error!("Failed to start http handler: {:?}", err))
-    });
+    let _http = HttpServer::start(
+        &config.listeners.http,
+        metadata.clone(),
+        http_logger,
+        ipasn_db.clone(),
+        ipgeo_db.clone(),
+        shutdown.guard(),
+    )
+    .await
+    .context("Failed to start HTTP server")?;
 
     shutdown
         .shutdown_with_limit(std::time::Duration::from_mins(2))

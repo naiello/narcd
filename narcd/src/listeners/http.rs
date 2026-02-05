@@ -18,11 +18,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio_graceful::ShutdownGuard;
+use tokio_util::task::AbortOnDropHandle;
 
 #[derive(Deserialize, Clone)]
 pub struct HttpConfig {
     pub listen_addr: String,
-    pub listen_port: u16,
+    pub listen_ports: Vec<u16>,
     pub response_status: u16,
     pub max_body_size: usize,
     pub max_header_size: usize,
@@ -33,7 +35,7 @@ impl Default for HttpConfig {
     fn default() -> Self {
         HttpConfig {
             listen_addr: "0.0.0.0".to_owned(),
-            listen_port: 80,
+            listen_ports: vec![80],
             response_status: 403,
             max_body_size: 4096,
             max_header_size: 8192,
@@ -46,6 +48,15 @@ impl HttpConfig {
     fn connection_timeout(&self) -> Duration {
         Duration::from_secs(self.connection_timeout_secs)
     }
+
+    fn effective_ports(&self) -> &[u16] {
+        if self.listen_ports.is_empty() {
+            log::warn!("HTTP listen_ports is empty, using default port 80");
+            &[80]
+        } else {
+            self.listen_ports.as_ref()
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -57,11 +68,97 @@ pub struct HttpServer<L: EventLogger<HttpRequest>> {
     pub ipgeo_db: Arc<IpGeoDb>,
 }
 
-impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
+pub struct HttpServerHandle {
+    _server_tasks: Vec<Arc<AbortOnDropHandle<()>>>,
+}
+
+impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
+    pub async fn start(
+        config: &HttpConfig,
+        metadata: Arc<Metadata>,
+        logger: L,
+        ipasn_db: Arc<IpAsnDb>,
+        ipgeo_db: Arc<IpGeoDb>,
+        shutdown: ShutdownGuard,
+    ) -> Result<HttpServerHandle> {
+        let config = Arc::new(config.clone());
+        let server = Arc::new(HttpServer {
+            logger,
+            metadata,
+            config: config.clone(),
+            ipasn_db,
+            ipgeo_db,
+        });
+
+        let mut server_tasks = Vec::new();
+
+        for port in config.effective_ports().iter().copied() {
+            let addr = format!("{}:{}", config.listen_addr, port).parse::<SocketAddr>()?;
+            let listener = TcpListener::bind(addr).await?;
+            log::info!("starting http listener on {}", addr);
+
+            let server = server.clone();
+            let config = config.clone();
+
+            let task = shutdown.spawn_task_fn(move |guard| {
+                Self::run_listener(listener, server, config, port, guard)
+            });
+
+            server_tasks.push(Arc::new(AbortOnDropHandle::new(task)));
+        }
+
+        Ok(HttpServerHandle {
+            _server_tasks: server_tasks,
+        })
+    }
+
+    async fn run_listener(
+        listener: TcpListener,
+        server: Arc<Self>,
+        config: Arc<HttpConfig>,
+        port: u16,
+        guard: ShutdownGuard,
+    ) {
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, peer_addr)) => {
+                            let io = TokioIo::new(stream);
+                            let server = server.clone();
+                            let timeout = config.connection_timeout();
+
+                            guard.spawn_task(async move {
+                                let service = service_fn(move |req| {
+                                    let server = server.clone();
+                                    async move { server.handle_request(req, peer_addr, port).await }
+                                });
+
+                                let conn = http1::Builder::new().serve_connection(io, service);
+
+                                if let Err(e) = tokio::time::timeout(timeout, conn).await {
+                                    log::debug!("connection timeout from {}: {:?}", peer_addr, e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to accept connection on port {}: {}", port, e);
+                        }
+                    }
+                }
+                _ = guard.cancelled() => {
+                    log::info!("HTTP listener on port {} shutting down", port);
+                    break;
+                }
+            }
+        }
+    }
+
     async fn handle_request(
         &self,
         req: Request<Incoming>,
         peer_addr: SocketAddr,
+        dst_port: u16,
     ) -> Result<Response<String>> {
         let method = req.method().to_string();
         let path = req.uri().path().to_string();
@@ -94,6 +191,7 @@ impl<L: EventLogger<HttpRequest> + 'static> HttpServer<L> {
             path,
             src_ip,
             src_port: peer_addr.port(),
+            dst_port,
             auth,
             user_agent,
             referer,
@@ -162,46 +260,4 @@ async fn read_body_with_limit(
     let body_str = String::from_utf8_lossy(&bytes[..bytes_to_read]).to_string();
 
     Ok((Some(body_str), body_size, body_truncated))
-}
-
-pub async fn start_server<L: EventLogger<HttpRequest> + Clone + Shared>(
-    config: &HttpConfig,
-    metadata: Arc<Metadata>,
-    logger: L,
-    ipasn_db: Arc<IpAsnDb>,
-    ipgeo_db: Arc<IpGeoDb>,
-) -> Result<()> {
-    let addr = format!("{}:{}", config.listen_addr, config.listen_port).parse::<SocketAddr>()?;
-
-    let listener = TcpListener::bind(addr).await?;
-    log::info!("starting http listener on {}", addr);
-
-    let config = Arc::new(config.clone());
-    let server = Arc::new(HttpServer {
-        logger,
-        metadata,
-        config: config.clone(),
-        ipasn_db,
-        ipgeo_db,
-    });
-
-    loop {
-        let (stream, peer_addr) = listener.accept().await?;
-        let io = TokioIo::new(stream);
-        let server = server.clone();
-        let timeout = config.connection_timeout();
-
-        tokio::spawn(async move {
-            let service = service_fn(move |req| {
-                let server = server.clone();
-                async move { server.handle_request(req, peer_addr).await }
-            });
-
-            let conn = http1::Builder::new().serve_connection(io, service);
-
-            if let Err(e) = tokio::time::timeout(timeout, conn).await {
-                log::debug!("connection timeout from {}: {:?}", peer_addr, e);
-            }
-        });
-    }
 }

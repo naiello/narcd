@@ -69,6 +69,7 @@ pub struct HttpRequest {
     pub path: String,
     pub src_ip: IpAddr,
     pub src_port: u16,
+    pub dst_port: u16,
 
     pub auth: HttpAuthMethod,
 

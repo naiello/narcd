@@ -12,7 +12,7 @@ server_id = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5"
 
 [listeners.http]
 listen_addr = "0.0.0.0"
-listen_port = 80
+listen_ports = [80, 18789]
 response_status = 403
 max_body_size = 4096
 max_header_size = 8192
