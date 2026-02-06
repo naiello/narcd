@@ -33,7 +33,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     events::PortScan, ipasn::IpAsnDb, ipgeo::IpGeoDb, logger::EventLogger, metadata::Metadata,
-    util::partition_hashmap,
+    rdns::ReverseDns, util::partition_hashmap,
 };
 
 const EVENTS_READ_BUF_SIZE: usize = 10;
@@ -52,6 +52,7 @@ impl EbpfListener {
         packet_disposition: HashMap<PacketSource, PacketDisposition>,
         ipasn_db: Arc<IpAsnDb>,
         ipgeo_db: Arc<IpGeoDb>,
+        rdns: Arc<ReverseDns>,
         shutdown: ShutdownGuard,
     ) -> Result<Self> {
         let (ready_tx, ready_rx) = oneshot::channel::<()>();
@@ -98,7 +99,7 @@ impl EbpfListener {
             }
 
             let collector =
-                FlowCollector::new(logger, metadata, ipasn_db, ipgeo_db, shutdown.clone());
+                FlowCollector::new(logger, metadata, ipasn_db, ipgeo_db, rdns, shutdown.clone());
             let mut tasks = Vec::new();
             for cpu_id in online_cpus().map_err(|(_, error)| error)? {
                 let buf = events.open(cpu_id, None)?;
@@ -151,6 +152,7 @@ impl FlowCollector {
         metadata: Arc<Metadata>,
         ipasn_db: Arc<IpAsnDb>,
         ipgeo_db: Arc<IpGeoDb>,
+        rdns: Arc<ReverseDns>,
         shutdown: ShutdownGuard,
     ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<Flow>();
@@ -159,6 +161,7 @@ impl FlowCollector {
             metadata,
             ipasn_db,
             ipgeo_db,
+            rdns,
             scans: HashMap::new(),
             rx,
         };
@@ -181,6 +184,7 @@ struct FlowCollectorTask<L: EventLogger<PortScan> + Sync> {
     metadata: Arc<Metadata>,
     ipasn_db: Arc<IpAsnDb>,
     ipgeo_db: Arc<IpGeoDb>,
+    rdns: Arc<ReverseDns>,
     scans: HashMap<TrackedScanKey, TrackedScan>,
 }
 
@@ -222,6 +226,11 @@ impl<L: EventLogger<PortScan> + Sync> FlowCollectorTask<L> {
                 _ => None,
             };
 
+            let src_hostname = match key.src_ip {
+                IpAddr::V4(ipv4) => self.rdns.lookup(ipv4).await,
+                _ => None,
+            };
+
             let event = PortScan {
                 ts: utcnow,
                 dst_ports: scan.dst_ports.iter().copied().collect(),
@@ -230,6 +239,7 @@ impl<L: EventLogger<PortScan> + Sync> FlowCollectorTask<L> {
                 src_ports: scan.src_ports.iter().copied().collect(),
                 src_ip_as,
                 src_ip_geo,
+                src_hostname,
                 scan_type: key.scan_type,
             };
 

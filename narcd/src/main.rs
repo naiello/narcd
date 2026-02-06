@@ -8,6 +8,7 @@ use narcd::listeners::http::HttpServer;
 use narcd::listeners::ssh::SshServer;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
+use narcd::rdns::ReverseDns;
 use narcd_common::{PacketDisposition, PacketSource};
 use std::collections::HashMap;
 use std::env;
@@ -36,6 +37,7 @@ async fn main() -> Result<()> {
 
     let ipasn_db = Arc::new(IpAsnDb::new(config.ipasn, shutdown.guard()).await?);
     let ipgeo_db = Arc::new(IpGeoDb::new(config.ipgeo, sdk_config, shutdown.guard()).await?);
+    let rdns = Arc::new(ReverseDns::new());
 
     // TODO: Move this into config.
     // Don't log wireguard traffic from the management IP
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
         pktdisp,
         ipasn_db.clone(),
         ipgeo_db.clone(),
+        rdns.clone(),
         shutdown.guard(),
     )
     .await
@@ -67,6 +70,7 @@ async fn main() -> Result<()> {
         ssh_logger,
         ipasn_db.clone(),
         ipgeo_db.clone(),
+        rdns.clone(),
         shutdown.guard(),
     )
     .await
@@ -79,6 +83,7 @@ async fn main() -> Result<()> {
         http_logger,
         ipasn_db.clone(),
         ipgeo_db.clone(),
+        rdns.clone(),
         shutdown.guard(),
     )
     .await

@@ -31,6 +31,8 @@ pub struct SshLogin {
     pub src_ip_as: Option<IpAsMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_geo: Option<IpGeoMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_hostname: Option<String>,
     pub metadata: Metadata,
 }
 
@@ -47,6 +49,8 @@ pub struct PortScan {
     pub src_ip_as: Option<IpAsMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_geo: Option<IpGeoMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_hostname: Option<String>,
     pub metadata: Metadata,
     pub scan_type: FlowType,
 }
@@ -91,6 +95,8 @@ pub struct HttpRequest {
     pub src_ip_as: Option<IpAsMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_ip_geo: Option<IpGeoMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_hostname: Option<String>,
     pub metadata: Metadata,
 }
 

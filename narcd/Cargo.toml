@@ -47,6 +47,8 @@ aws-sdk-ssm = { workspace = true }
 uuid = { workspace = true }
 tokio-graceful = { workspace = true }
 tokio-util = { workspace = true }
+moka = { workspace = true }
+dns-lookup = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

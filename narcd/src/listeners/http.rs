@@ -3,6 +3,7 @@ use crate::ipasn::IpAsnDb;
 use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
+use crate::rdns::ReverseDns;
 use crate::util::Shared;
 use anyhow::Result;
 use base64::prelude::*;
@@ -66,6 +67,7 @@ pub struct HttpServer<L: EventLogger<HttpRequest>> {
     pub config: Arc<HttpConfig>,
     pub ipasn_db: Arc<IpAsnDb>,
     pub ipgeo_db: Arc<IpGeoDb>,
+    pub rdns: Arc<ReverseDns>,
 }
 
 pub struct HttpServerHandle {
@@ -79,6 +81,7 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
         logger: L,
         ipasn_db: Arc<IpAsnDb>,
         ipgeo_db: Arc<IpGeoDb>,
+        rdns: Arc<ReverseDns>,
         shutdown: ShutdownGuard,
     ) -> Result<HttpServerHandle> {
         let config = Arc::new(config.clone());
@@ -88,6 +91,7 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
             config: config.clone(),
             ipasn_db,
             ipgeo_db,
+            rdns,
         });
 
         let mut server_tasks = Vec::new();
@@ -185,6 +189,11 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
             _ => None,
         };
 
+        let src_hostname = match src_ip {
+            IpAddr::V4(ipv4) => self.rdns.lookup(ipv4).await,
+            _ => None,
+        };
+
         let event = HttpRequest {
             ts: Utc::now(),
             method,
@@ -202,6 +211,7 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
             body_truncated,
             src_ip_as,
             src_ip_geo,
+            src_hostname,
             metadata: self.metadata.as_ref().clone(),
         };
 
