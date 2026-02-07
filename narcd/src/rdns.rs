@@ -9,6 +9,12 @@ pub struct ReverseDns {
     cache: Cache<Ipv4Addr, Option<String>>,
 }
 
+impl Default for ReverseDns {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReverseDns {
     pub fn new() -> Self {
         Self {

@@ -6,5 +6,6 @@ pub mod ipgeo;
 pub mod listeners;
 pub mod logger;
 pub mod metadata;
+pub mod passwdstats;
 pub mod rdns;
 pub mod util;

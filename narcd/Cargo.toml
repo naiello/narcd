@@ -49,6 +49,8 @@ tokio-graceful = { workspace = true }
 tokio-util = { workspace = true }
 moka = { workspace = true }
 dns-lookup = { workspace = true }
+zxcvbn = { workspace = true }
+entropy = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

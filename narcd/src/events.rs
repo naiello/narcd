@@ -3,14 +3,15 @@ use narcd_common::FlowType;
 use serde::{Serialize, Serializer};
 use std::net::IpAddr;
 
-use crate::{metadata::Metadata, util::Shared};
+use crate::{metadata::Metadata, passwdstats::PasswordStatistics, util::Shared};
 
-#[derive(PartialEq, Eq, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum SshAuthMethod {
     None,
     Password {
         password: String,
+        stats: PasswordStatistics,
     },
     PublicKey {
         key_fingerprint: String,
@@ -19,7 +20,7 @@ pub enum SshAuthMethod {
     },
 }
 
-#[derive(PartialEq, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct SshLogin {
     #[serde(serialize_with = "serialize_ts")]
     pub ts: DateTime<Utc>,

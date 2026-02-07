@@ -54,6 +54,8 @@ tokio-graceful = "0.2.2"
 tokio-util = { version = "0.7.18", features = ["rt"] }
 moka = { version = "0.12.13", features = ["future"] }
 dns-lookup = "3.0.1"
+zxcvbn = "3.1.0"
+entropy = "0.4.3"
 
 [profile.release.package.narcd-ebpf]
 debug = 2

@@ -3,6 +3,7 @@ use crate::ipasn::IpAsnDb;
 use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
+use crate::passwdstats::PasswordStatistics;
 use crate::rdns::ReverseDns;
 use anyhow::Result;
 use chrono::Utc;
@@ -116,6 +117,7 @@ impl<L: EventLogger<SshLogin>> server::Handler for SshHandler<L> {
             username: user.to_string(),
             auth: SshAuthMethod::Password {
                 password: password.to_string(),
+                stats: PasswordStatistics::new(user, password),
             },
             src_ip_as,
             src_ip_geo,
