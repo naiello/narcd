@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use narcd_common::FlowType;
 use serde::{Serialize, Serializer};
-use std::net::IpAddr;
+use std::{
+    collections::HashSet,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use crate::{metadata::Metadata, passwdstats::PasswordStatistics, util::Shared};
 
@@ -99,6 +102,7 @@ pub struct HttpRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src_hostname: Option<String>,
     pub metadata: Metadata,
+    pub observables: Observables,
 }
 
 impl Shared for HttpRequest {}
@@ -125,4 +129,13 @@ pub struct IpGeoMetadata {
 
 fn serialize_ts<S: Serializer>(v: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {
     s.collect_str(&v.format("%Y-%m-%dT%H:%M:%S%.3fZ"))
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Serialize)]
+pub struct Observables {
+    pub ipv4: HashSet<Ipv4Addr>,
+    pub ipv6: HashSet<Ipv6Addr>,
+    pub urls: HashSet<String>,
+    pub cves: HashSet<String>,
+    pub tags: HashSet<String>,
 }

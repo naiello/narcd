@@ -1,4 +1,5 @@
-use crate::events::{HttpAuthMethod, HttpRequest};
+use crate::events::{HttpAuthMethod, HttpRequest, Observables};
+use crate::observables::{merge_common, merge_http};
 use crate::ipasn::IpAsnDb;
 use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
@@ -164,19 +165,29 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
         peer_addr: SocketAddr,
         dst_port: u16,
     ) -> Result<Response<String>> {
-        let method = req.method().to_string();
-        let path = req.uri().path().to_string();
+        let (parts, incoming_body) = req.into_parts();
+        let method = parts.method.to_string();
+        let path = parts.uri.path().to_string();
+        let headers = parts.headers;
 
-        let headers = req.headers();
-        let user_agent = try_extract_header(headers, "user-agent");
-        let referer = try_extract_header(headers, "referer");
-        let host = try_extract_header(headers, "host");
-        let content_type = try_extract_header(headers, "content-type");
+        let user_agent = try_extract_header(&headers, "user-agent");
+        let referer = try_extract_header(&headers, "referer");
+        let host = try_extract_header(&headers, "host");
+        let content_type = try_extract_header(&headers, "content-type");
 
-        let auth = extract_auth(headers);
+        let auth = extract_auth(&headers);
 
         let (body, body_size, body_truncated) =
-            read_body_with_limit(req.into_body(), self.config.max_body_size).await?;
+            read_body_with_limit(incoming_body, self.config.max_body_size).await?;
+
+        let mut obs = Observables::default();
+        merge_common(&path, &mut obs);
+        if let Some(body_str) = &body {
+            merge_common(body_str, &mut obs);
+            merge_http(body_str, &method, &headers, &mut obs);
+        } else {
+            merge_http("", &method, &headers, &mut obs);
+        }
 
         let src_ip = peer_addr.ip();
         let src_ip_as = match src_ip {
@@ -213,6 +224,7 @@ impl<L: EventLogger<HttpRequest> + Clone + Shared + 'static> HttpServer<L> {
             src_ip_geo,
             src_hostname,
             metadata: self.metadata.as_ref().clone(),
+            observables: obs,
         };
 
         self.logger.log_event(event).await?;

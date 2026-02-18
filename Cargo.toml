@@ -56,6 +56,8 @@ moka = { version = "0.12.13", features = ["future"] }
 dns-lookup = "3.0.1"
 zxcvbn = "3.1.0"
 entropy = "0.4.3"
+regex = "1"
+lazy_static = "1"
 
 [profile.release.package.narcd-ebpf]
 debug = 2
