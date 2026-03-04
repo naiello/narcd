@@ -9,7 +9,6 @@ use narcd::listeners::ssh::SshServer;
 use narcd::logger::FileLogger;
 use narcd::metadata::resolve_metadata;
 use narcd::rdns::ReverseDns;
-use narcd_common::{PacketDisposition, PacketSource};
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -40,15 +39,7 @@ async fn main() -> Result<()> {
     let rdns = Arc::new(ReverseDns::new());
 
     // TODO: Move this into config.
-    // Don't log wireguard traffic from the management IP
-    let mut pktdisp = HashMap::new();
-    pktdisp.insert(
-        PacketSource {
-            dst_port: 33666,
-            proto: 17, // UDP
-        },
-        PacketDisposition::Ignore,
-    );
+    let pktdisp = HashMap::new();
 
     let scan_logger = FileLogger::new(&config.log.dir, "scan.log", shutdown.guard()).await?;
     let _ebpf = EbpfListener::start(

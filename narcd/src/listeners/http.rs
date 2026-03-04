@@ -1,9 +1,9 @@
 use crate::events::{HttpAuthMethod, HttpRequest, Observables};
-use crate::observables::{merge_common, merge_http};
 use crate::ipasn::IpAsnDb;
 use crate::ipgeo::IpGeoDb;
 use crate::logger::EventLogger;
 use crate::metadata::Metadata;
+use crate::observables::{merge_common, merge_http};
 use crate::rdns::ReverseDns;
 use crate::util::Shared;
 use anyhow::Result;
